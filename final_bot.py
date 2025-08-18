@@ -4,7 +4,9 @@ from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes
 from rubpy import BotClient
 
-# ... (بخش تنظیمات بدون تغییر)
+# ===============================================================
+# بخش تنظیمات (بدون تغییر)
+# ===============================================================
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
@@ -16,7 +18,10 @@ except (TypeError, ValueError):
     exit()
 
 PORT = int(os.environ.get("PORT", 8443))
-# ...
+
+# ===============================================================
+# بخش اصلی کد
+# ===============================================================
 
 rubika_bot: BotClient | None = None
 
@@ -26,11 +31,7 @@ async def post_init(application: Application):
     rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
     await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
-    
-    # *** تغییر مهم: ما دیگر وبهوک را اینجا تنظیم نمی کنیم ***
-    # تابع run_webhook خودش این کار را در زمان صحیح انجام می دهد
 
-# ... (تابع post_shutdown و telegram_channel_handler بدون تغییر باقی می ماند)
 async def post_shutdown(application: Application):
     if rubika_bot:
         print("در حال متوقف کردن کلاینت روبیکا...")
@@ -41,31 +42,56 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     message = update.channel_post
     if not (message and rubika_bot):
         return
-    print(f"\nیک پیام جدید از کانال تلگرام دریافت شد.")
+
+    print(f"\n==============================================")
+    print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
+        caption = message.caption or ""
+
+        # ارسال پیام متنی
         if message.text:
+            print(f"پیام متنی شناسایی شد: '{message.text}'")
             await rubika_bot.send_message(RUBIKA_DESTINATION_CHAT_ID, message.text)
             print("--> پیام متنی با موفقیت به روبیکا ارسال شد.")
+
+        # ارسال عکس
         elif message.photo:
-            caption = message.caption or ""
+            print("پیام حاوی عکس شناسایی شد.")
             file = await message.photo[-1].get_file()
             file_path = await file.download_to_drive()
+            print(f"عکس در مسیر موقت '{file_path}' دانلود شد.")
             await rubika_bot.send_file(RUBIKA_DESTINATION_CHAT_ID, file=str(file_path), text=caption, type='Image')
-            print("--> عکس با موفقیت به روبیکا ارسال شد.")
+            print("--> عکس (به همراه کپشن) با موفقیت به روبیکا ارسال شد.")
             os.remove(file_path)
+            print("فایل موقت پاک شد.")
+            
+        # *** بلوک جدید برای پشتیبانی از ویدیو ***
+        elif message.video:
+            print("پیام حاوی ویدیو شناسایی شد.")
+            file = await message.video.get_file()
+            file_path = await file.download_to_drive()
+            print(f"ویدیو در مسیر موقت '{file_path}' دانلود شد.")
+            await rubika_bot.send_file(
+                RUBIKA_DESTINATION_CHAT_ID,
+                file=str(file_path),
+                text=caption,
+                type='Video'  # <<< تفاوت اصلی اینجاست
+            )
+            print("--> ویدیو (به همراه کپشن) با موفقیت به روبیکا ارسال شد.")
+            os.remove(file_path)
+            print("فایل موقت پاک شد.")
+
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
+    print(f"==============================================\n")
+
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID), telegram_channel_handler))
-    
     print("==================================================")
-    print("ربات فورواردر در حالت وبهوک آماده اجرا است...")
+    print("ربات فورواردر نهایی (پشتیبانی از ویدیو) آنلاین شد...")
     print("==================================================")
-    
-    # *** تغییر نهایی و کلیدی ***
-    # ما آدرس وبهوک را مستقیماً به run_webhook می دهیم
     app.run_webhook(
         listen="0.0.0.0",
         port=PORT,
