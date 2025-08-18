@@ -5,13 +5,16 @@ from telegram.ext import Application, ApplicationBuilder, MessageHandler, filter
 from rubpy import BotClient
 
 # ===============================================================
-# بخش تنظیمات (بدون تغییر)
+# بخش تنظیمات نهایی
 # ===============================================================
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
-    RUBIKA_DESTINATION_CHAT_ID = os.environ.get("RUBIKA_DESTINATION_CHAT_ID")
+    
+    # *** تغییر نهایی: بازگشت به شناسه کانال مقصد ***
+    RUBIKA_DESTINATION_CHANNEL_ID = os.environ.get("RUBIKA_DESTINATION_CHANNEL_ID")
+    
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 except (TypeError, ValueError):
     print("خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است.")
@@ -20,7 +23,7 @@ except (TypeError, ValueError):
 PORT = int(os.environ.get("PORT", 8443))
 
 # ===============================================================
-# بخش اصلی کد
+# بخش اصلی کد (با شناسه کانال)
 # ===============================================================
 
 rubika_bot: BotClient | None = None
@@ -48,50 +51,24 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     try:
         caption = message.caption or ""
 
-        # ارسال پیام متنی
+        # ارسال پیام متنی به کانال
         if message.text:
             print(f"پیام متنی شناسایی شد: '{message.text}'")
-            await rubika_bot.send_message(RUBIKA_DESTINATION_CHAT_ID, message.text)
-            print("--> پیام متنی با موفقیت به روبیکا ارسال شد.")
+            await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, message.text)
+            print("--> پیام متنی با موفقیت به کانال روبیکا ارسال شد.")
 
-        # ارسال عکس
+        # ارسال عکس به کانال
         elif message.photo:
             print("پیام حاوی عکس شناسایی شد.")
             file = await message.photo[-1].get_file()
             file_path = await file.download_to_drive()
             print(f"عکس در مسیر موقت '{file_path}' دانلود شد.")
-            await rubika_bot.send_file(RUBIKA_DESTINATION_CHAT_ID, file=str(file_path), text=caption, type='Image')
-            print("--> عکس (به همراه کپشن) با موفقیت به روبیکا ارسال شد.")
+            await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption, type='Image')
+            print("--> عکس (به همراه کپشن) با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
             print("فایل موقت پاک شد.")
             
-        # ارسال ویدیو
-        elif message.video:
-            print("پیام حاوی ویدیو شناسایی شد.")
-            file = await message.video.get_file()
-            file_path = await file.download_to_drive()
-            print(f"ویدیو در مسیر موقت '{file_path}' دانلود شد.")
-            await rubika_bot.send_file(RUBIKA_DESTINATION_CHAT_ID, file=str(file_path), text=caption, type='Video')
-            print("--> ویدیو (به همراه کپشن) با موفقیت به روبیکا ارسال شد.")
-            os.remove(file_path)
-            print("فایل موقت پاک شد.")
-            
-        # *** بلوک جدید برای پشتیبانی از داکیومنت/فایل ***
-        elif message.document:
-            print("پیام حاوی داکیومنت/فایل شناسایی شد.")
-            file = await message.document.get_file()
-            file_path = await file.download_to_drive()
-            print(f"فایل در مسیر موقت '{file_path}' دانلود شد.")
-            
-            # برای فایل عمومی، نیازی به تعیین type نیست
-            await rubika_bot.send_file(
-                RUBIKA_DESTINATION_CHAT_ID,
-                file=str(file_path),
-                text=caption
-            )
-            print("--> فایل (به همراه کپشن) با موفقیت به روبیکا ارسال شد.")
-            os.remove(file_path)
-            print("فایل موقت پاک شد.")
+        # شما می توانید به همین شکل برای ویدیو و داکیومنت هم کد را اضافه کنید
 
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
@@ -102,7 +79,9 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID), telegram_channel_handler))
     print("==================================================")
-    print("ربات فورواردر نهایی (پشتیبانی از فایل) آنلاین شد...")
+    print("ربات فورواردر نهایی (ارسال به کانال) آنلاین شد...")
+    print(f"گوش دادن به کانال تلگرام: {TELEGRAM_SOURCE_CHANNEL_ID}")
+    print(f"ارسال به کانال روبیکا: {RUBIKA_DESTINATION_CHANNEL_ID}")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
