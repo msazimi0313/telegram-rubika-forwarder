@@ -65,19 +65,31 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             os.remove(file_path)
             print("فایل موقت پاک شد.")
             
-        # *** بلوک جدید برای پشتیبانی از ویدیو ***
+        # ارسال ویدیو
         elif message.video:
             print("پیام حاوی ویدیو شناسایی شد.")
             file = await message.video.get_file()
             file_path = await file.download_to_drive()
             print(f"ویدیو در مسیر موقت '{file_path}' دانلود شد.")
+            await rubika_bot.send_file(RUBIKA_DESTINATION_CHAT_ID, file=str(file_path), text=caption, type='Video')
+            print("--> ویدیو (به همراه کپشن) با موفقیت به روبیکا ارسال شد.")
+            os.remove(file_path)
+            print("فایل موقت پاک شد.")
+            
+        # *** بلوک جدید برای پشتیبانی از داکیومنت/فایل ***
+        elif message.document:
+            print("پیام حاوی داکیومنت/فایل شناسایی شد.")
+            file = await message.document.get_file()
+            file_path = await file.download_to_drive()
+            print(f"فایل در مسیر موقت '{file_path}' دانلود شد.")
+            
+            # برای فایل عمومی، نیازی به تعیین type نیست
             await rubika_bot.send_file(
                 RUBIKA_DESTINATION_CHAT_ID,
                 file=str(file_path),
-                text=caption,
-                type='Video'  # <<< تفاوت اصلی اینجاست
+                text=caption
             )
-            print("--> ویدیو (به همراه کپشن) با موفقیت به روبیکا ارسال شد.")
+            print("--> فایل (به همراه کپشن) با موفقیت به روبیکا ارسال شد.")
             os.remove(file_path)
             print("فایل موقت پاک شد.")
 
@@ -90,7 +102,7 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID), telegram_channel_handler))
     print("==================================================")
-    print("ربات فورواردر نهایی (پشتیبانی از ویدیو) آنلاین شد...")
+    print("ربات فورواردر نهایی (پشتیبانی از فایل) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
