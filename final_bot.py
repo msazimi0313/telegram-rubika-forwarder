@@ -40,37 +40,60 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
 
     print(f"\n==============================================")
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
-    
-    # این کد فقط به پیام های ویدیویی واکنش نشان می دهد
-    if message.video:
-        try:
-            print("مرحله ۱: پیام ویدیویی شناسایی شد.")
-            caption = message.caption or ""
-            print("مرحله ۲: کپشن استخراج شد.")
+    try:
+        caption = message.caption or ""
 
-            file = await message.video.get_file()
-            print("مرحله ۳: آبجکت فایل از تلگرام دریافت شد.")
+        # ارسال پیام متنی
+        if message.text:
+            await rubika_bot.send_message(RUBIKA_DESTINATION_CHAT_ID, message.text)
+            print("--> پیام متنی با موفقیت به روبیکا ارسال شد.")
 
+        # ارسال عکس
+        elif message.photo:
+            file = await message.photo[-1].get_file()
             file_path = await file.download_to_drive()
-            print(f"مرحله ۴: ویدیو در مسیر '{file_path}' دانلود شد.")
-
+            await rubika_bot.send_file(RUBIKA_DESTINATION_CHAT_ID, file=str(file_path), text=caption, type='Image')
+            print("--> عکس با موفقیت به روبیکا ارسال شد.")
+            os.remove(file_path)
+            
+        # ارسال ویدیو (با راه‌حل جدید و ارسال تمام جزئیات)
+        elif message.video:
+            print("پیام حاوی ویدیو شناسایی شد.")
+            video = message.video # آبجکت ویدیو را در یک متغیر می ریزیم
+            
+            # استخراج تمام جزئیات ویدیو
+            file_name = video.file_name
+            mime_type = video.mime_type
+            duration = video.duration
+            width = video.width
+            height = video.height
+            size = video.file_size # حجم فایل به بایت
+            
+            print(f"جزئیات ویدیو: نام={file_name}, حجم={size}, زمان={duration}s")
+            
+            file = await video.get_file()
+            file_path = await file.download_to_drive()
+            print(f"ویدیو در مسیر موقت '{file_path}' دانلود شد.")
+            
+            # *** تغییر اصلی اینجاست: ارسال تمام جزئیات به متد send_file ***
             await rubika_bot.send_file(
                 RUBIKA_DESTINATION_CHAT_ID,
                 file=str(file_path),
+                file_name=file_name,
+                size=size,
+                mime=mime_type,
+                duration=duration,
+                width=width,
+                height=height,
                 text=caption,
                 type='Video'
             )
-            print("مرحله ۵: دستور ارسال ویدیو به روبیکا اجرا شد.")
-
+            print("--> ویدیو (به همراه تمام جزئیات) با موفقیت به روبیکا ارسال شد.")
             os.remove(file_path)
-            print("مرحله ۶: فایل موقت پاک شد.")
-            print("--> فرآیند ویدیو با موفقیت کامل انجام شد.")
+            print("فایل موقت پاک شد.")
 
-        except Exception as e:
-            print(f"!! یک خطا در هنگام پردازش ویدیو رخ داد: {e}")
-    else:
-        print("--> پیام از نوع ویدیو نبود و نادیده گرفته شد.")
-        
+    except Exception as e:
+        print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
 
 
@@ -79,7 +102,7 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID), telegram_channel_handler))
     print("==================================================")
-    print("ربات در حالت تست ویدیو آنلاین شد...")
+    print("ربات فورواردر نهایی (ارسال ویدیو با جزئیات کامل) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
