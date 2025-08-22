@@ -5,7 +5,7 @@ from telegram.ext import Application, ApplicationBuilder, MessageHandler, filter
 from rubpy import BotClient
 
 # ===============================================================
-# بخش تنظیمات (بدون تغییر)
+# بخش تنظیمات
 # ===============================================================
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -47,45 +47,37 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
         caption = message.caption or ""
-
+        # ارسال پیام متنی
         if message.text:
             await rubika_bot.send_message(RUBIKA_DESTINATION_CHAT_ID, message.text)
             print("--> پیام متنی با موفقیت به روبیکا ارسال شد.")
 
+        # ارسال عکس
         elif message.photo:
             file = await message.photo[-1].get_file()
             file_path = await file.download_to_drive()
             await rubika_bot.send_file(RUBIKA_DESTINATION_CHAT_ID, file=str(file_path), text=caption, type='Image')
             print("--> عکس با موفقیت به روبیکا ارسال شد.")
             os.remove(file_path)
-            
-        elif message.video:
-            print("پیام حاوی ویدیو شناسایی شد.")
-            file = await message.video.get_file()
-            file_path = await file.download_to_drive()
-            print(f"ویدیو در مسیر موقت '{file_path}' دانلود شد.")
-            
-            # *** بازگشت به کد ساده و صحیح ***
-            await rubika_bot.send_file(
-                RUBIKA_DESTINATION_CHAT_ID,
-                file=str(file_path),
-                text=caption,
-                type='Video'
-            )
-            print("--> ویدیو (به همراه کپشن) با موفقیت به روبیکا ارسال شد.")
-            os.remove(file_path)
-            print("فایل موقت پاک شد.")
 
+        # مدیریت ویدیو (اطلاع رسانی به جای فوروارد)
+        elif message.video:
+            print("پیام ویدیویی شناسایی شد. به دلیل باگ در کتابخانه، فقط اطلاع رسانی می شود.")
+            video_info = f"یک ویدیو در کانال تلگرام دریافت شد.\n"
+            if caption:
+                video_info += f"کپشن: {caption}"
+            await rubika_bot.send_message(RUBIKA_DESTINATION_CHAT_ID, video_info)
+            print("--> پیام اطلاع رسانی در مورد ویدیو به روبیکا ارسال شد.")
+            
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
-
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID), telegram_channel_handler))
     print("==================================================")
-    print("ربات فورواردر نهایی (نسخه کامل با آپدیت جدید) آنلاین شد...")
+    print("ربات فورواردر (نسخه پایدار) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
