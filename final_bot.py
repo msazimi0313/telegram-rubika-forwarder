@@ -4,26 +4,17 @@ from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes
 from rubpy import BotClient
 
-# ===============================================================
-# بخش تنظیمات
-# ===============================================================
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
     RUBIKA_DESTINATION_CHAT_ID = os.environ.get("RUBIKA_DESTINATION_CHAT_ID")
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-    PYTHONUNBUFFERED = os.environ.get("PYTHONUNBUFFERED")
 except (TypeError, ValueError):
     print("خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است.")
     exit()
 
 PORT = int(os.environ.get("PORT", 10000))
-
-# ===============================================================
-# بخش اصلی کد
-# ===============================================================
-
 rubika_bot: BotClient | None = None
 
 async def post_init(application: Application):
@@ -43,7 +34,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     message = update.channel_post
     if not (message and rubika_bot):
         return
-
     print(f"\n==============================================")
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
@@ -59,7 +49,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             os.remove(file_path)
         else:
             print("--> پیام از نوع پشتیبانی نشده (ویدیو، داکیومنت و...) و نادیده گرفته شد.")
-
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
