@@ -61,34 +61,20 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             
         elif message.video:
             print("پیام حاوی ویدیو شناسایی شد.")
-            video = message.video
-            thumbnail_path = None
-            
-            if video.thumbnail:
-                print("در حال دانلود تامبنیل...")
-                thumb_file = await video.thumbnail.get_file()
-                thumbnail_path = await thumb_file.download_to_drive()
-            
-            print("در حال دانلود ویدیو...")
-            file = await video.get_file()
+            file = await message.video.get_file()
             file_path = await file.download_to_drive()
+            print(f"ویدیو در مسیر موقت '{file_path}' دانلود شد.")
             
+            # *** بازگشت به کد ساده و صحیح ***
             await rubika_bot.send_file(
                 RUBIKA_DESTINATION_CHAT_ID,
                 file=str(file_path),
                 text=caption,
-                type='Video',
-                thumbnail=str(thumbnail_path) if thumbnail_path else None,
-                duration=video.duration,
-                width=video.width,
-                height=video.height
+                type='Video'
             )
-            print("--> ویدیو (با تمام جزئیات) با موفقیت به روبیکا ارسال شد.")
-            
+            print("--> ویدیو (به همراه کپشن) با موفقیت به روبیکا ارسال شد.")
             os.remove(file_path)
-            if thumbnail_path:
-                os.remove(thumbnail_path)
-            print("فایل های موقت پاک شدند.")
+            print("فایل موقت پاک شد.")
 
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
