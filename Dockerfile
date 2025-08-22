@@ -5,7 +5,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # 3. Install system dependencies, including ffmpeg
-RUN apt-get update && apt-get install -y ffmpeg
+RUN apt-get update && apt-get install -y ffmpeg git
 
 # 4. Copy the requirements file and install Python dependencies
 COPY requirements.txt .
