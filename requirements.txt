@@ -1,4 +1,3 @@
 python-telegram-bot
 APScheduler==3.10.4
 rubpy @ git+https://github.com/shayanheidari01/rubika.git
-moviepy
