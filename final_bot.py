@@ -5,16 +5,13 @@ from telegram.ext import Application, ApplicationBuilder, MessageHandler, filter
 from rubpy import BotClient
 
 # ===============================================================
-# بخش تنظیمات نهایی
+# بخش تنظیمات (بدون تغییر)
 # ===============================================================
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
-    
-    # *** تغییر نهایی: بازگشت به شناسه کانال مقصد ***
-    RUBIKA_DESTINATION_CHANNEL_ID = os.environ.get("RUBIKA_DESTINATION_CHANNEL_ID")
-    
+    RUBIKA_DESTINATION_CHAT_ID = os.environ.get("RUBIKA_DESTINATION_CHAT_ID")
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
 except (TypeError, ValueError):
     print("خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است.")
@@ -23,7 +20,7 @@ except (TypeError, ValueError):
 PORT = int(os.environ.get("PORT", 8443))
 
 # ===============================================================
-# بخش اصلی کد (با شناسه کانال)
+# بخش اصلی کد
 # ===============================================================
 
 rubika_bot: BotClient | None = None
@@ -51,24 +48,55 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     try:
         caption = message.caption or ""
 
-        # ارسال پیام متنی به کانال
+        # ارسال پیام متنی
         if message.text:
-            print(f"پیام متنی شناسایی شد: '{message.text}'")
-            await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, message.text)
-            print("--> پیام متنی با موفقیت به کانال روبیکا ارسال شد.")
+            await rubika_bot.send_message(RUBIKA_DESTINATION_CHAT_ID, message.text)
+            print("--> پیام متنی با موفقیت به روبیکا ارسال شد.")
 
-        # ارسال عکس به کانال
+        # ارسال عکس
         elif message.photo:
-            print("پیام حاوی عکس شناسایی شد.")
             file = await message.photo[-1].get_file()
             file_path = await file.download_to_drive()
-            print(f"عکس در مسیر موقت '{file_path}' دانلود شد.")
-            await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption, type='Image')
-            print("--> عکس (به همراه کپشن) با موفقیت به کانال روبیکا ارسال شد.")
+            await rubika_bot.send_file(RUBIKA_DESTINATION_CHAT_ID, file=str(file_path), text=caption, type='Image')
+            print("--> عکس با موفقیت به روبیکا ارسال شد.")
             os.remove(file_path)
-            print("فایل موقت پاک شد.")
             
-        # شما می توانید به همین شکل برای ویدیو و داکیومنت هم کد را اضافه کنید
+        # ارسال ویدیو (با راه‌حل نهایی و ارسال تامبنیل)
+        elif message.video:
+            print("پیام حاوی ویدیو شناسایی شد.")
+            video = message.video
+            thumbnail_path = None
+            
+            # 1. دانلود تامبنیل ویدیو (اگر وجود داشت)
+            if video.thumbnail:
+                print("تامبنیل پیدا شد. در حال دانلود تامبنیل...")
+                thumb_file = await video.thumbnail.get_file()
+                thumbnail_path = await thumb_file.download_to_drive()
+                print(f"تامبنیل در مسیر '{thumbnail_path}' دانلود شد.")
+            
+            # 2. دانلود خود ویدیو
+            file = await video.get_file()
+            file_path = await file.download_to_drive()
+            print(f"ویدیو در مسیر '{file_path}' دانلود شد.")
+            
+            # 3. ارسال ویدیو به همراه تمام جزئیات مورد نیاز
+            await rubika_bot.send_file(
+                RUBIKA_DESTINATION_CHAT_ID,
+                file=str(file_path),
+                text=caption,
+                type='Video',
+                thumbnail=str(thumbnail_path) if thumbnail_path else None,
+                duration=video.duration,
+                width=video.width,
+                height=video.height
+            )
+            print("--> ویدیو (به همراه تامبنیل و کپشن) با موفقیت به روبیکا ارسال شد.")
+            
+            # 4. پاک کردن فایل های موقت
+            os.remove(file_path)
+            if thumbnail_path:
+                os.remove(thumbnail_path)
+            print("فایل های موقت پاک شدند.")
 
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
@@ -76,12 +104,11 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
 
 
 def main():
+    # ... (بخش main بدون تغییر)
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID), telegram_channel_handler))
     print("==================================================")
-    print("ربات فورواردر نهایی (ارسال به کانال) آنلاین شد...")
-    print(f"گوش دادن به کانال تلگرام: {TELEGRAM_SOURCE_CHANNEL_ID}")
-    print(f"ارسال به کانال روبیکا: {RUBIKA_DESTINATION_CHANNEL_ID}")
+    print("ربات فورواردر نهایی (نسخه کامل) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
