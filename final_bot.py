@@ -16,7 +16,7 @@ except (TypeError, ValueError):
     print("خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است.")
     exit()
 
-PORT = int(os.environ.get("PORT", 8443))
+PORT = int(os.environ.get("PORT", 10000))
 # ... (کدهای post_init و post_shutdown بدون تغییر)
 
 rubika_bot: BotClient | None = None
