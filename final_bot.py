@@ -3,10 +3,9 @@ import os
 from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes
 from rubpy import BotClient
+from moviepy.editor import VideoFileClip  # کتابخانه جدید را وارد می کنیم
 
-# ===============================================================
-# بخش تنظیمات
-# ===============================================================
+# ... (بخش تنظیمات بدون تغییر)
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
@@ -18,10 +17,7 @@ except (TypeError, ValueError):
     exit()
 
 PORT = int(os.environ.get("PORT", 8443))
-
-# ===============================================================
-# بخش اصلی کد
-# ===============================================================
+# ... (کدهای post_init و post_shutdown بدون تغییر)
 
 rubika_bot: BotClient | None = None
 
@@ -47,37 +43,75 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
         caption = message.caption or ""
-        # ارسال پیام متنی
+        # ... (بخش ارسال متن و عکس بدون تغییر)
         if message.text:
             await rubika_bot.send_message(RUBIKA_DESTINATION_CHAT_ID, message.text)
             print("--> پیام متنی با موفقیت به روبیکا ارسال شد.")
-
-        # ارسال عکس
         elif message.photo:
             file = await message.photo[-1].get_file()
             file_path = await file.download_to_drive()
             await rubika_bot.send_file(RUBIKA_DESTINATION_CHAT_ID, file=str(file_path), text=caption, type='Image')
             print("--> عکس با موفقیت به روبیکا ارسال شد.")
             os.remove(file_path)
-
-        # مدیریت ویدیو (اطلاع رسانی به جای فوروارد)
-        elif message.video:
-            print("پیام ویدیویی شناسایی شد. به دلیل باگ در کتابخانه، فقط اطلاع رسانی می شود.")
-            video_info = f"یک ویدیو در کانال تلگرام دریافت شد.\n"
-            if caption:
-                video_info += f"کپشن: {caption}"
-            await rubika_bot.send_message(RUBIKA_DESTINATION_CHAT_ID, video_info)
-            print("--> پیام اطلاع رسانی در مورد ویدیو به روبیکا ارسال شد.")
             
+        # ارسال ویدیو (با قابلیت تغییر اندازه خودکار)
+        elif message.video:
+            print("پیام حاوی ویدیو شناسایی شد.")
+            video = message.video
+            
+            # 1. دانلود ویدیو اصلی
+            original_file = await video.get_file()
+            original_path = await original_file.download_to_drive()
+            print(f"ویدیو اصلی در '{original_path}' دانلود شد.")
+
+            # 2. پردازش و تغییر اندازه با moviepy
+            clip = VideoFileClip(str(original_path))
+            width, height = clip.size
+            max_size = 720
+            output_path = str(original_path) # به صورت پیش فرض فایل خروجی همان فایل ورودی است
+
+            if width > max_size or height > max_size:
+                print(f"ابعاد ویدیو ({width}x{height}) بزرگتر از حد مجاز است. در حال تغییر اندازه...")
+                scale_factor = min(max_size / width, max_size / height)
+                new_width = int(width * scale_factor)
+                new_height = int(height * scale_factor)
+                
+                output_path_resized = "resized_" + os.path.basename(original_path)
+                
+                resized_clip = clip.resize(newsize=(new_width, new_height))
+                resized_clip.write_videofile(output_path_resized, codec='libx264', logger=None)
+                output_path = output_path_resized # فایل خروجی ما، فایل تغییر اندازه داده شده است
+                print(f"ویدیو با موفقیت به ابعاد {new_width}x{new_height} تغییر اندازه داد.")
+            else:
+                print("ابعاد ویدیو مناسب است. نیازی به تغییر اندازه نیست.")
+
+            # 3. ارسال فایل نهایی به روبیکا
+            await rubika_bot.send_file(
+                RUBIKA_DESTINATION_CHAT_ID,
+                file=output_path,
+                text=caption,
+                type='Video'
+            )
+            print("--> ویدیو با موفقیت به روبیکا ارسال شد.")
+            
+            # 4. پاک کردن فایل های موقت
+            clip.close()
+            os.remove(original_path)
+            if output_path != str(original_path):
+                os.remove(output_path)
+            print("فایل های موقت پاک شدند.")
+
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
 
+
 def main():
+    # ... (بخش main بدون تغییر)
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID), telegram_channel_handler))
     print("==================================================")
-    print("ربات فورواردر (نسخه پایدار) آنلاین شد...")
+    print("ربات فورواردر نهایی (با پردازش ویدیو) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
