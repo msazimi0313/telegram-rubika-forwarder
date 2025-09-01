@@ -47,28 +47,45 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     print(f"\n==============================================")
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
+        caption = message.caption or ""
         sent_rubika_message = None
-        # ارسال متن ساده
+
         if message.text:
             sent_rubika_message = await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, message.text)
-            print("--> پیام متنی (ساده) با موفقیت به کانال روبیکا ارسال شد.")
+            print("--> پیام متنی با موفقیت به کانال روبیکا ارسال شد.")
+        elif message.photo:
+            file = await message.photo[-1].get_file()
+            file_path = await file.download_to_drive()
+            sent_rubika_message = await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption, type='Image')
+            print("--> عکس با موفقیت به کانال روبیکا ارسال شد.")
+            os.remove(file_path)
+        elif message.video:
+            file = await message.video.get_file()
+            file_path = await file.download_to_drive()
+            sent_rubika_message = await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption, type='Video')
+            print("--> ویدیو با موفقیت به کانال روبیکا ارسال شد.")
+            os.remove(file_path)
         
-        # ارسال عکس یا ویدیو با کپشن ساده
-        elif message.photo or message.video:
-            file_to_process = message.photo[-1] if message.photo else message.video
-            file_type = 'Image' if message.photo else 'Video'
-            caption = message.caption or ""
+        # *** بلوک موسیقی با متد جدید و صحیح ***
+        elif message.audio:
+            print("پیام حاوی موسیقی/صوت شناسایی شد.")
+            audio = message.audio
+            full_caption = f"🎵 {audio.performer or ''} - {audio.title or ''}\n\n{caption}".strip()
             
-            tg_file = await file_to_process.get_file()
-            file_path = await tg_file.download_to_drive()
+            file = await audio.get_file()
+            file_path = await file.download_to_drive()
+            print(f"فایل صوتی در '{file_path}' دانلود شد.")
             
-            sent_rubika_message = await rubika_bot.send_file(
+            # استفاده از متد send_music با پارامترهای صحیح
+            sent_rubika_message = await rubika_bot.send_music(
                 RUBIKA_DESTINATION_CHANNEL_ID,
                 file=str(file_path),
-                text=caption, # ارسال کپشن به صورت متن ساده
-                type=file_type
+                text=full_caption,
+                performer=audio.performer,
+                title=audio.title,
+                duration=audio.duration
             )
-            print(f"--> فایل از نوع '{file_type}' با کپشن ساده با موفقیت به کانال روبیکا ارسال شد.")
+            print("--> فایل صوتی (به صورت موسیقی) با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
 
         if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
@@ -83,6 +100,7 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
 
+# ... (تابع telegram_edited_channel_handler و main بدون تغییر)
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     edited_message = update.edited_channel_post
     if not (edited_message and rubika_bot): return
@@ -92,7 +110,6 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         telegram_id = edited_message.message_id
         if telegram_id in message_map:
             rubika_id = message_map[telegram_id]
-            # ارسال متن یا کپشن ویرایش شده به صورت ساده
             new_content = edited_message.text or edited_message.caption or ""
             await rubika_bot.edit_message_text(RUBIKA_DESTINATION_CHANNEL_ID, rubika_id, new_content)
             print(f"--> پیام ({rubika_id}) در روبیکا با موفقیت ویرایش شد.")
@@ -113,7 +130,7 @@ def main():
         telegram_edited_channel_handler
     ))
     print("==================================================")
-    print("ربات فورواردر (نسخه نهایی پایدار) آنلاین شد...")
+    print("ربات فورواردر (نسخه کامل نهایی) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
