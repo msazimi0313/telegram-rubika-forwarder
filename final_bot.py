@@ -61,7 +61,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             print("--> ویدیو با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
         
-        # *** بلوک موسیقی با متد send_music ***
         elif message.audio:
             print("پیام حاوی موسیقی/صوت شناسایی شد.")
             audio = message.audio
@@ -71,9 +70,10 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             file_path = await file.download_to_drive()
             print(f"فایل صوتی در '{file_path}' دانلود شد.")
             
+            # *** تغییر نهایی اینجاست: استفاده از پارامتر file به جای music ***
             sent_rubika_message = await rubika_bot.send_music(
                 RUBIKA_DESTINATION_CHANNEL_ID,
-                music=str(file_path),
+                file=str(file_path),
                 text=full_caption
             )
             print("--> فایل صوتی (به صورت موسیقی) با موفقیت به کانال روبیکا ارسال شد.")
@@ -91,7 +91,7 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
 
-# ... (تابع telegram_edited_channel_handler و main بدون تغییر)
+# ... (تابع telegram_edited_channel_handler و main بدون تغییر باقی می مانند)
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     edited_message = update.edited_channel_post
     if not (edited_message and rubika_bot): return
