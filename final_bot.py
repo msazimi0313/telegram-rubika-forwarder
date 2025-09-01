@@ -27,28 +27,6 @@ PORT = int(os.environ.get("PORT", 10000))
 rubika_bot: BotClient | None = None
 message_map = {}
 
-def convert_telegram_entities_to_markdown(text, entities):
-    if not entities: return text
-    for entity in sorted(entities, key=lambda e: e.offset, reverse=True):
-        start = entity.offset
-        end = start + entity.length
-        entity_text = text[start:end]
-        markdown_text = entity_text
-        if entity.type == 'bold':
-            markdown_text = f"**{entity_text}**"
-        elif entity.type == 'italic':
-            markdown_text = f"_{entity_text}_"
-        elif entity.type == 'text_link':
-            markdown_text = f"[{entity_text}]({entity.url})"
-        elif entity.type == 'spoiler':
-            markdown_text = f"||{entity_text}||"
-        elif entity.type == 'code':
-            markdown_text = f"`{entity_text}`"
-        elif entity.type == 'pre':
-            markdown_text = f"```{entity_text}```"
-        text = text[:start] + markdown_text + text[end:]
-    return text
-
 async def post_init(application: Application):
     global rubika_bot
     print("در حال ساخت و فعال سازی کلاینت روبیکا...")
@@ -65,28 +43,32 @@ async def post_shutdown(application: Application):
 async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.channel_post
     if not (message and rubika_bot): return
+
     print(f"\n==============================================")
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
         sent_rubika_message = None
+        # ارسال متن ساده
         if message.text:
-            final_text = convert_telegram_entities_to_markdown(message.text, message.entities)
-            sent_rubika_message = await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, final_text, parse_mode='Markdown')
-            print("--> پیام متنی (با فرمت) با موفقیت به کانال روبیکا ارسال شد.")
+            sent_rubika_message = await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, message.text)
+            print("--> پیام متنی (ساده) با موفقیت به کانال روبیکا ارسال شد.")
+        
+        # ارسال عکس یا ویدیو با کپشن ساده
         elif message.photo or message.video:
             file_to_process = message.photo[-1] if message.photo else message.video
             file_type = 'Image' if message.photo else 'Video'
-            final_caption = convert_telegram_entities_to_markdown(message.caption or "", message.caption_entities)
+            caption = message.caption or ""
+            
             tg_file = await file_to_process.get_file()
             file_path = await tg_file.download_to_drive()
+            
             sent_rubika_message = await rubika_bot.send_file(
                 RUBIKA_DESTINATION_CHANNEL_ID,
                 file=str(file_path),
-                text=final_caption,
-                type=file_type,
-                parse_mode='Markdown'
+                text=caption, # ارسال کپشن به صورت متن ساده
+                type=file_type
             )
-            print(f"--> فایل از نوع '{file_type}' با موفقیت به کانال روبیکا ارسال شد.")
+            print(f"--> فایل از نوع '{file_type}' با کپشن ساده با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
 
         if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
@@ -96,6 +78,7 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             print(f"  -> شناسه ها ثبت شد: تلگرام({telegram_id}) -> روبیکا({rubika_id})")
         else:
             print("--> پیام از نوع پشتیبانی نشده و نادیده گرفته شد.")
+            
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
@@ -109,11 +92,9 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         telegram_id = edited_message.message_id
         if telegram_id in message_map:
             rubika_id = message_map[telegram_id]
-            new_content = convert_telegram_entities_to_markdown(
-                edited_message.text or edited_message.caption or "",
-                edited_message.entities or edited_message.caption_entities
-            )
-            await rubika_bot.edit_message_text(RUBIKA_DESTINATION_CHANNEL_ID, rubika_id, new_content, parse_mode='Markdown')
+            # ارسال متن یا کپشن ویرایش شده به صورت ساده
+            new_content = edited_message.text or edited_message.caption or ""
+            await rubika_bot.edit_message_text(RUBIKA_DESTINATION_CHANNEL_ID, rubika_id, new_content)
             print(f"--> پیام ({rubika_id}) در روبیکا با موفقیت ویرایش شد.")
         else:
             print("--> شناسه پیام ویرایش شده در دفترچه یافت نشد.")
@@ -123,10 +104,16 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
-    app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.CHANNEL_POST, telegram_channel_handler))
-    app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.EDITED_CHANNEL_POST, telegram_edited_channel_handler))
+    app.add_handler(MessageHandler(
+        filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.CHANNEL_POST,
+        telegram_channel_handler
+    ))
+    app.add_handler(MessageHandler(
+        filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.EDITED_CHANNEL_POST,
+        telegram_edited_channel_handler
+    ))
     print("==================================================")
-    print("ربات فورواردر (با فرمت متن و ویرایش) آنلاین شد...")
+    print("ربات فورواردر (نسخه نهایی پایدار) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
