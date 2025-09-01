@@ -48,11 +48,13 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
         caption = message.caption or ""
-        # ارسال پیام متنی به کانال
+        
+        # ارسال پیام متنی
         if message.text:
             await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, message.text)
             print("--> پیام متنی با موفقیت به کانال روبیکا ارسال شد.")
-        # ارسال عکس به کانال
+            
+        # ارسال عکس
         elif message.photo:
             file = await message.photo[-1].get_file()
             file_path = await file.download_to_drive()
@@ -60,34 +62,68 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             print("--> عکس با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
             
-        # *** بلوک ویدیو دوباره برای ارسال به کانال فعال شد ***
+        # ارسال ویدیو
         elif message.video:
-            print("پیام حاوی ویدیو شناسایی شد.")
             file = await message.video.get_file()
             file_path = await file.download_to_drive()
-            print(f"ویدیو در مسیر موقت '{file_path}' دانلود شد.")
-            
-            await rubika_bot.send_file(
-                RUBIKA_DESTINATION_CHANNEL_ID,
-                file=str(file_path),
-                text=caption,
-                type='Video'
-            )
+            await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption, type='Video')
             print("--> ویدیو با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
-            print("فایل موقت پاک شد.")
+        
+        # *** بلوک جدید برای موسیقی/فایل صوتی ***
+        elif message.audio:
+            print("پیام حاوی موسیقی/صوت شناسایی شد.")
+            audio = message.audio
+            # ساخت یک کپشن بهتر با اطلاعات فایل صوتی
+            full_caption = ""
+            if audio.performer and audio.title:
+                full_caption = f"🎵 {audio.performer} - {audio.title}\n\n"
+            full_caption += caption
+            
+            file = await audio.get_file()
+            file_path = await file.download_to_drive()
+            print(f"فایل صوتی در '{file_path}' دانلود شد.")
+            
+            # فایل صوتی را به عنوان یک فایل عمومی ارسال می کنیم
+            await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=full_caption)
+            print("--> فایل صوتی با موفقیت به کانال روبیکا ارسال شد.")
+            os.remove(file_path)
+            
+        # *** بلوک جدید برای داکیومنت/فایل عمومی ***
+        elif message.document:
+            print("پیام حاوی داکیومنت/فایل شناسایی شد.")
+            file = await message.document.get_file()
+            file_path = await file.download_to_drive()
+            print(f"فایل در '{file_path}' دانلود شد.")
+            
+            await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption)
+            print("--> داکیومنت با موفقیت به کانال روبیکا ارسال شد.")
+            os.remove(file_path)
+
+        # *** بلوک جدید برای نظرسنجی ***
+        elif message.poll:
+            print("پیام حاوی نظرسنجی شناسایی شد.")
+            poll = message.poll
+            question = poll.question
+            options = [option.text for option in poll.options]
+            
+            # استفاده از متد send_poll کتابخانه روبپای
+            await rubika_bot.send_poll(RUBIKA_DESTINATION_CHANNEL_ID, question=question, options=options)
+            print("--> نظرسنجی با موفقیت به کانال روبیکا ارسال شد.")
+            
         else:
-            print("--> پیام از نوع پشتیبانی نشده (داکیومنت و...) و نادیده گرفته شد.")
+            print("--> پیام از نوع پشتیبانی نشده (مانند استیکر و...) و نادیده گرفته شد.")
             
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
 
+
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID), telegram_channel_handler))
     print("==================================================")
-    print("ربات فورواردر (تست نهایی ویدیو به کانال) آنلاین شد...")
+    print("ربات فورواردر کامل آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
