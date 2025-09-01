@@ -5,13 +5,12 @@ from telegram.ext import Application, ApplicationBuilder, MessageHandler, filter
 from rubpy import BotClient
 
 # ===============================================================
-# بخش تنظیمات
+# بخش تنظیمات (بدون تغییر)
 # ===============================================================
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
-    # استفاده از شناسه کانال
     RUBIKA_DESTINATION_CHANNEL_ID = os.environ.get("RUBIKA_DESTINATION_CHANNEL_ID")
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
     PYTHONUNBUFFERED = os.environ.get("PYTHONUNBUFFERED")
@@ -49,17 +48,36 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
         caption = message.caption or ""
+        # ارسال پیام متنی به کانال
         if message.text:
             await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, message.text)
             print("--> پیام متنی با موفقیت به کانال روبیکا ارسال شد.")
+        # ارسال عکس به کانال
         elif message.photo:
             file = await message.photo[-1].get_file()
             file_path = await file.download_to_drive()
             await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption, type='Image')
             print("--> عکس با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
+            
+        # *** بلوک ویدیو دوباره برای ارسال به کانال فعال شد ***
+        elif message.video:
+            print("پیام حاوی ویدیو شناسایی شد.")
+            file = await message.video.get_file()
+            file_path = await file.download_to_drive()
+            print(f"ویدیو در مسیر موقت '{file_path}' دانلود شد.")
+            
+            await rubika_bot.send_file(
+                RUBIKA_DESTINATION_CHANNEL_ID,
+                file=str(file_path),
+                text=caption,
+                type='Video'
+            )
+            print("--> ویدیو با موفقیت به کانال روبیکا ارسال شد.")
+            os.remove(file_path)
+            print("فایل موقت پاک شد.")
         else:
-            print("--> پیام از نوع پشتیبانی نشده (ویدیو، داکیومنت و...) و نادیده گرفته شد.")
+            print("--> پیام از نوع پشتیبانی نشده (داکیومنت و...) و نادیده گرفته شد.")
             
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
@@ -69,7 +87,7 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     app.add_handler(MessageHandler(filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID), telegram_channel_handler))
     print("==================================================")
-    print("ربات فورواردر (ارسال به کانال) آنلاین شد...")
+    print("ربات فورواردر (تست نهایی ویدیو به کانال) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
