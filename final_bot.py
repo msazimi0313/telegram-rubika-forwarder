@@ -67,21 +67,28 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             os.remove(file_path)
         
         elif message.audio:
-            print("پیام حاوی موسیقی/صوت شناسایی شد.")
             audio = message.audio
             full_caption = f"🎵 {audio.performer or ''} - {audio.title or ''}\n\n{caption}".strip()
-            
             file = await audio.get_file()
             file_path = await file.download_to_drive()
-            print(f"فایل صوتی در '{file_path}' دانلود شد.")
-            
-            # *** تغییر نهایی: حذف پارامترهای اضافی ***
-            sent_rubika_message = await rubika_bot.send_music(
-                RUBIKA_DESTINATION_CHANNEL_ID,
-                file=str(file_path),
-                text=full_caption
-            )
+            sent_rubika_message = await rubika_bot.send_music(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=full_caption)
             print("--> فایل صوتی (به صورت موسیقی) با موفقیت به کانال روبیکا ارسال شد.")
+            os.remove(file_path)
+
+        # *** بلوک جدید برای پشتیبانی از ویس ***
+        elif message.voice:
+            print("پیام حاوی ویس (صدای ضبط شده) شناسایی شد.")
+            voice = message.voice
+            file = await voice.get_file()
+            file_path = await file.download_to_drive()
+            print(f"فایل ویس در '{file_path}' دانلود شد.")
+            
+            # استفاده از متد جدید send_voice
+            sent_rubika_message = await rubika_bot.send_voice(
+                RUBIKA_DESTINATION_CHANNEL_ID,
+                voice=str(file_path)
+            )
+            print("--> ویس با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
 
         if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
@@ -126,7 +133,7 @@ def main():
         telegram_edited_channel_handler
     ))
     print("==================================================")
-    print("ربات فورواردر (تست نهایی موسیقی) آنلاین شد...")
+    print("ربات فورواردر (با قابلیت ویس) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
