@@ -21,53 +21,31 @@ except (TypeError, ValueError):
 PORT = int(os.environ.get("PORT", 10000))
 
 # ===============================================================
-# بخش اصلی کد (بازنویسی شده)
+# بخش اصلی کد
 # ===============================================================
 
-# 1. ساخت کلاینت روبیکا
-rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
-
-# 2. ساخت اپلیکیشن تلگرام (بدون اجرای آن)
-telegram_app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-
-# 3. تعریف "دفترچه یادداشت" برای نگهداری شناسه پیام ها
+rubika_bot: BotClient | None = None
 message_map = {}
 
-# --- تعریف توابع رویداد برای ربات روبیکا ---
-
-@rubika_bot.on_start()
-async def on_startup(client: BotClient):
-    """این تابع یک بار در زمان آنلاین شدن ربات روبیکا اجرا می شود"""
+async def post_init(application: Application):
+    """این تابع کلاینت روبیکا را بعد از راه اندازی حلقه asyncio می سازد و آن را فعال می کند"""
+    global rubika_bot
+    print("در حال ساخت و فعال سازی کلاینت روبیکا...")
+    rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
+    await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
-    print("در حال راه اندازی شنونده تلگرام در حالت وبهوک...")
-    
-    # اجرای شنونده تلگرام در پس زمینه
-    # ما دیگر منتظر پایان اجرای وبهوک نمی مانیم
-    asyncio.create_task(telegram_app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TELEGRAM_BOT_TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_BOT_TOKEN}"
-    ))
-    print("==================================================")
-    print("ربات فورواردر به طور کامل آنلاین و آماده به کار است.")
-    print("==================================================")
 
-@rubika_bot.on_shutdown()
-async def on_shutdown(client: BotClient):
-    """این تابع در زمان خاموش شدن ربات روبیکا اجرا می شود"""
-    print("در حال متوقف کردن شنونده تلگرام...")
-    await telegram_app.shutdown()
-    print("شنونده تلگرام با موفقیت متوقف شد.")
-    print("کلاینت روبیکا با موفقیت متوقف شد.")
-
-
-# --- تعریف توابع پردازش پیام تلگرام (بدون تغییر در منطق) ---
+async def post_shutdown(application: Application):
+    """این تابع کلاینت روبیکا را در زمان خاموش شدن ربات، متوقف می کند"""
+    if rubika_bot:
+        print("در حال متوقف کردن کلاینت روبیکا...")
+        await rubika_bot.close()
+        print("کلاینت روبیکا با موفقیت متوقف شد.")
 
 async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # این بخش بدون تغییر است
     message = update.channel_post
-    if not message: return
-
+    if not (message and rubika_bot): return
     print(f"\n==============================================")
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
@@ -95,8 +73,9 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     print(f"==============================================\n")
 
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # این بخش بدون تغییر است
     edited_message = update.edited_channel_post
-    if not edited_message: return
+    if not (edited_message and rubika_bot): return
     print(f"\n==============================================")
     print(f"یک پیام ویرایش شده از تلگرام دریافت شد.")
     try:
@@ -113,21 +92,31 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
     print(f"==============================================\n")
 
 
-# --- بخش نهایی: اضافه کردن شنونده ها و اجرای ربات ---
-
 def main():
-    # اضافه کردن شنونده ها به اپلیکیشن تلگرام
-    telegram_app.add_handler(MessageHandler(
+    """ تابع اصلی برنامه که ربات تلگرام را به عنوان برنامه اصلی اجرا می کند """
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
+    
+    # اضافه کردن شنونده ها
+    app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.CHANNEL_POST,
         telegram_channel_handler
     ))
-    telegram_app.add_handler(MessageHandler(
+    app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.EDITED_CHANNEL_POST,
         telegram_edited_channel_handler
     ))
     
-    # اجرای ربات روبیکا (که به صورت خودکار ربات تلگرام را هم راه اندازی می کند)
-    rubika_bot.run()
+    print("==================================================")
+    print("ربات فورواردر (نسخه نهایی پایدار) آنلاین شد...")
+    print("==================================================")
+    
+    # اجرای ربات تلگرام در حالت وبهوک
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TELEGRAM_BOT_TOKEN,
+        webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_BOT_TOKEN}"
+    )
 
 if __name__ == '__main__':
     main()
