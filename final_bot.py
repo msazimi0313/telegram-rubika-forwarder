@@ -75,7 +75,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             print("--> فایل صوتی (به صورت موسیقی) با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
 
-        # *** بلوک جدید برای پشتیبانی از ویس ***
         elif message.voice:
             print("پیام حاوی ویس (صدای ضبط شده) شناسایی شد.")
             voice = message.voice
@@ -83,10 +82,10 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             file_path = await file.download_to_drive()
             print(f"فایل ویس در '{file_path}' دانلود شد.")
             
-            # استفاده از متد جدید send_voice
+            # *** تغییر نهایی اینجاست: استفاده از پارامتر file به جای voice ***
             sent_rubika_message = await rubika_bot.send_voice(
                 RUBIKA_DESTINATION_CHANNEL_ID,
-                voice=str(file_path)
+                file=str(file_path)
             )
             print("--> ویس با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
