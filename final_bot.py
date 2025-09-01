@@ -82,8 +82,8 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
             rubika_id = message_map[telegram_id]
             new_text = edited_message.text or ""
             
-            # *** تغییر نهایی اینجاست: استفاده از نام پارامترها (Keyword Arguments) ***
-            await rubika_bot.edit_message_text(message_id=rubika_id, text=new_text)
+            # *** تغییر نهایی اینجاست: اضافه کردن شناسه کانال به عنوان اولین ورودی ***
+            await rubika_bot.edit_message_text(RUBIKA_DESTINATION_CHANNEL_ID, rubika_id, new_text)
             print(f"--> پیام ({rubika_id}) در روبیکا با موفقیت به متن جدید ویرایش شد.")
         else:
             print("--> شناسه پیام ویرایش شده در دفترچه یافت نشد.")
@@ -95,11 +95,13 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     
+    # شنونده برای پیام های جدید
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.CHANNEL_POST,
         telegram_channel_handler
     ))
     
+    # شنونده برای پیام های ویرایش شده
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.EDITED_CHANNEL_POST,
         telegram_edited_channel_handler
