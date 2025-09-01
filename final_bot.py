@@ -43,19 +43,41 @@ async def post_shutdown(application: Application):
 async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.channel_post
     if not (message and rubika_bot): return
+
     print(f"\n==============================================")
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
+        caption = message.caption or ""
         sent_rubika_message = None
+
         if message.text:
             sent_rubika_message = await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, message.text)
             print("--> پیام متنی با موفقیت به کانال روبیکا ارسال شد.")
         elif message.photo:
-            caption = message.caption or ""
             file = await message.photo[-1].get_file()
             file_path = await file.download_to_drive()
             sent_rubika_message = await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption, type='Image')
             print("--> عکس با موفقیت به کانال روبیکا ارسال شد.")
+            os.remove(file_path)
+        elif message.video:
+            file = await message.video.get_file()
+            file_path = await file.download_to_drive()
+            sent_rubika_message = await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption, type='Video')
+            print("--> ویدیو با موفقیت به کانال روبیکا ارسال شد.")
+            os.remove(file_path)
+        elif message.audio:
+            audio = message.audio
+            full_caption = f"🎵 {audio.performer or ''} - {audio.title or ''}\n\n{caption}".strip()
+            file = await audio.get_file()
+            file_path = await file.download_to_drive()
+            sent_rubika_message = await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=full_caption)
+            print("--> فایل صوتی با موفقیت به کانال روبیکا ارسال شد.")
+            os.remove(file_path)
+        elif message.document:
+            file = await message.document.get_file()
+            file_path = await file.download_to_drive()
+            sent_rubika_message = await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption)
+            print("--> داکیومنت با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
 
         if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
@@ -64,12 +86,11 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             message_map[telegram_id] = rubika_id
             print(f"  -> شناسه ها ثبت شد: تلگرام({telegram_id}) -> روبیکا({rubika_id})")
         else:
-            print("--> پیام از نوع پشتیبانی نشده و نادیده گرفته شد.")
+            print("--> پیام از نوع پشتیبانی نشده (نظرسنجی، استیکر و...) و نادیده گرفته شد.")
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
 
-# --- تابع ویرایش، آپدیت شد تا کپشن را هم مدیریت کند ---
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     edited_message = update.edited_channel_post
     if not (edited_message and rubika_bot): return
@@ -79,10 +100,7 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         telegram_id = edited_message.message_id
         if telegram_id in message_map:
             rubika_id = message_map[telegram_id]
-            # اگر پیام ویرایش شده متن جدید داشت، آن را بر می داریم
-            # اگر متن نداشت ولی کپشن جدید داشت، کپشن را بر می داریم
             new_content = edited_message.text or edited_message.caption or ""
-            
             await rubika_bot.edit_message_text(RUBIKA_DESTINATION_CHANNEL_ID, rubika_id, new_content)
             print(f"--> پیام ({rubika_id}) در روبیکا با موفقیت ویرایش شد.")
         else:
@@ -106,7 +124,7 @@ def main():
     ))
     
     print("==================================================")
-    print("ربات فورواردر (تست ویرایش کپشن) آنلاین شد...")
+    print("ربات فورواردر (نسخه نهایی کامل) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
