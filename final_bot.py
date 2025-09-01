@@ -11,7 +11,6 @@ try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
-    # مقصد را به کانال تغییر می دهیم
     RUBIKA_DESTINATION_CHANNEL_ID = os.environ.get("RUBIKA_DESTINATION_CHANNEL_ID")
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
     PYTHONUNBUFFERED = os.environ.get("PYTHONUNBUFFERED")
@@ -44,9 +43,7 @@ async def post_shutdown(application: Application):
 # تابع برای پیام های جدید (بدون تغییر)
 async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.channel_post
-    if not (message and rubika_bot):
-        return
-
+    if not (message and rubika_bot): return
     print(f"\n==============================================")
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
@@ -73,12 +70,10 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
 
-# تابع برای پیام های ویرایش شده (بدون تغییر)
+# تابع برای پیام های ویرایش شده (با نام متد اصلاح شده)
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     edited_message = update.edited_channel_post
-    if not (edited_message and rubika_bot):
-        return
-
+    if not (edited_message and rubika_bot): return
     print(f"\n==============================================")
     print(f"یک پیام ویرایش شده از تلگرام دریافت شد.")
     try:
@@ -87,7 +82,8 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
             rubika_id = message_map[telegram_id]
             new_text = edited_message.text or ""
             
-            await rubika_bot.edit_message(rubika_id, new_text)
+            # *** تغییر اصلی اینجاست: استفاده از نام صحیح متد ***
+            await rubika_bot.edit_message_text(rubika_id, new_text)
             print(f"--> پیام ({rubika_id}) در روبیکا با موفقیت به متن جدید ویرایش شد.")
         else:
             print("--> شناسه پیام ویرایش شده در دفترچه یافت نشد.")
@@ -98,9 +94,6 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
-    
-    # *** تغییر اصلی اینجاست ***
-    # ما هر دو شنونده را به طور دقیق به کانال مبدا محدود می کنیم
     
     # شنونده برای پیام های جدید
     app.add_handler(MessageHandler(
