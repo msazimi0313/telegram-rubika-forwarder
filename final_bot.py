@@ -11,8 +11,10 @@ from rubpy import BotClient
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
-    # شناسه کاربری عددی ادمین در تلگرام
-    TELEGRAM_ADMIN_ID = int(os.environ.get("TELEGRAM_ADMIN_ID"))
+    
+    # خواندن لیست ادمین ها از متغیر محیطی
+    ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
+    TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
     
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
     RUBIKA_DESTINATION_CHANNEL_ID = os.environ.get("RUBIKA_DESTINATION_CHANNEL_ID")
@@ -33,10 +35,7 @@ rubika_bot: BotClient | None = None
 message_map = {}
 stats = {"forwarded_messages": 0}
 
-# --- توابع مدیریت فایل برای ذخیره دائمی ---
-
 def load_data_from_file(filename, default_data):
-    """اطلاعات را از یک فایل جیسان می خواند"""
     try:
         with open(filename, 'r') as f:
             return json.load(f)
@@ -44,11 +43,8 @@ def load_data_from_file(filename, default_data):
         return default_data
 
 def save_data_to_file(filename, data):
-    """اطلاعات را در یک فایل جیسان ذخیره می کند"""
     with open(filename, 'w') as f:
         json.dump(data, f, indent=4)
-
-# --- توابع اصلی ربات ---
 
 async def post_init(application: Application):
     global rubika_bot, message_map, stats
@@ -57,7 +53,6 @@ async def post_init(application: Application):
     await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
     
-    # خواندن اطلاعات از فایل ها در زمان راه اندازی
     message_map = load_data_from_file('message_map.json', {})
     stats = load_data_from_file('stats.json', {"forwarded_messages": 0})
     print("اطلاعات قبلی (شناسه ها و آمار) با موفقیت بارگذاری شد.")
@@ -101,11 +96,10 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
         if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
             telegram_id = message.message_id
             rubika_id = sent_rubika_message.message_id
-            message_map[str(telegram_id)] = rubika_id # کلید جیسان باید رشته باشد
+            message_map[str(telegram_id)] = rubika_id
             save_data_to_file('message_map.json', message_map)
             print(f"  -> شناسه ها ثبت و ذخیره شد: تلگرام({telegram_id}) -> روبیکا({rubika_id})")
             
-            # افزایش شمارنده آمار
             stats["forwarded_messages"] += 1
             save_data_to_file('stats.json', stats)
         else:
@@ -121,7 +115,7 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
     print(f"\n==============================================")
     print(f"یک پیام ویرایش شده از تلگرام دریافت شد.")
     try:
-        telegram_id = str(edited_message.message_id) # کلید جیسان باید رشته باشد
+        telegram_id = str(edited_message.message_id)
         if telegram_id in message_map:
             rubika_id = message_map[telegram_id]
             new_content = edited_message.text or edited_message.caption or ""
@@ -133,7 +127,6 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
     print(f"==============================================\n")
 
-# --- تابع جدید برای دستورات ادمین ---
 async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == '/stats':
         count = stats.get("forwarded_messages", 0)
@@ -142,24 +135,23 @@ async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TY
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     
-    # هندلر برای پیام های کانال
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.CHANNEL_POST,
         telegram_channel_handler
     ))
-    # هندلر برای ویرایش پیام های کانال
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.EDITED_CHANNEL_POST,
         telegram_edited_channel_handler
     ))
-    # هندلر برای دستورات ادمین
+    
+    # استفاده از لیست ادمین ها در فیلتر
     app.add_handler(MessageHandler(
-        filters.User(user_id=TELEGRAM_ADMIN_ID) & filters.COMMAND,
+        filters.User(user_id=TELEGRAM_ADMIN_IDS) & filters.COMMAND,
         admin_command_handler
     ))
     
     print("==================================================")
-    print("ربات فورواردر کامل (با ذخیره دائمی و آمار) آنلاین شد...")
+    print("ربات فورواردر کامل (با چند ادمین) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
