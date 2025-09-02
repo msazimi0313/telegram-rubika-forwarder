@@ -1,21 +1,26 @@
 import asyncio
 import os
+import json
 from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes
 from rubpy import BotClient
 
 # ===============================================================
-# بخش تنظیمات (بدون تغییر)
+# بخش تنظیمات
 # ===============================================================
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
+    # شناسه کاربری عددی ادمین در تلگرام
+    TELEGRAM_ADMIN_ID = int(os.environ.get("TELEGRAM_ADMIN_ID"))
+    
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
     RUBIKA_DESTINATION_CHANNEL_ID = os.environ.get("RUBIKA_DESTINATION_CHANNEL_ID")
+    
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
     PYTHONUNBUFFERED = os.environ.get("PYTHONUNBUFFERED")
 except (TypeError, ValueError):
-    print("خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است.")
+    print("خطا: یکی از متغیرهای محیطی (شامل TELEGRAM_ADMIN_ID) تنظیم نشده یا فرمت آن اشتباه است.")
     exit()
 
 PORT = int(os.environ.get("PORT", 10000))
@@ -26,13 +31,36 @@ PORT = int(os.environ.get("PORT", 10000))
 
 rubika_bot: BotClient | None = None
 message_map = {}
+stats = {"forwarded_messages": 0}
+
+# --- توابع مدیریت فایل برای ذخیره دائمی ---
+
+def load_data_from_file(filename, default_data):
+    """اطلاعات را از یک فایل جیسان می خواند"""
+    try:
+        with open(filename, 'r') as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default_data
+
+def save_data_to_file(filename, data):
+    """اطلاعات را در یک فایل جیسان ذخیره می کند"""
+    with open(filename, 'w') as f:
+        json.dump(data, f, indent=4)
+
+# --- توابع اصلی ربات ---
 
 async def post_init(application: Application):
-    global rubika_bot
+    global rubika_bot, message_map, stats
     print("در حال ساخت و فعال سازی کلاینت روبیکا...")
     rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
     await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
+    
+    # خواندن اطلاعات از فایل ها در زمان راه اندازی
+    message_map = load_data_from_file('message_map.json', {})
+    stats = load_data_from_file('stats.json', {"forwarded_messages": 0})
+    print("اطلاعات قبلی (شناسه ها و آمار) با موفقیت بارگذاری شد.")
 
 async def post_shutdown(application: Application):
     if rubika_bot:
@@ -41,6 +69,7 @@ async def post_shutdown(application: Application):
         print("کلاینت روبیکا با موفقیت متوقف شد.")
 
 async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global stats
     message = update.channel_post
     if not (message and rubika_bot): return
 
@@ -53,48 +82,32 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
         if message.text:
             sent_rubika_message = await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, message.text)
             print("--> پیام متنی با موفقیت به کانال روبیکا ارسال شد.")
-        elif message.photo:
-            file = await message.photo[-1].get_file()
-            file_path = await file.download_to_drive()
-            sent_rubika_message = await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption, type='Image')
-            print("--> عکس با موفقیت به کانال روبیکا ارسال شد.")
-            os.remove(file_path)
-        elif message.video:
-            file = await message.video.get_file()
-            file_path = await file.download_to_drive()
-            sent_rubika_message = await rubika_bot.send_file(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=caption, type='Video')
-            print("--> ویدیو با موفقیت به کانال روبیکا ارسال شد.")
-            os.remove(file_path)
-        
-        elif message.audio:
-            audio = message.audio
-            full_caption = f"🎵 {audio.performer or ''} - {audio.title or ''}\n\n{caption}".strip()
-            file = await audio.get_file()
-            file_path = await file.download_to_drive()
-            sent_rubika_message = await rubika_bot.send_music(RUBIKA_DESTINATION_CHANNEL_ID, file=str(file_path), text=full_caption)
-            print("--> فایل صوتی (به صورت موسیقی) با موفقیت به کانال روبیکا ارسال شد.")
-            os.remove(file_path)
-
-        elif message.voice:
-            print("پیام حاوی ویس (صدای ضبط شده) شناسایی شد.")
-            voice = message.voice
-            file = await voice.get_file()
-            file_path = await file.download_to_drive()
-            print(f"فایل ویس در '{file_path}' دانلود شد.")
+        elif message.photo or message.video or message.document:
+            file_to_process = message.photo[-1] if message.photo else (message.video or message.document)
+            file_type = 'Image' if message.photo else ('Video' if message.video else 'File')
             
-            # *** تغییر نهایی اینجاست: استفاده از پارامتر file به جای voice ***
-            sent_rubika_message = await rubika_bot.send_voice(
+            tg_file = await file_to_process.get_file()
+            file_path = await tg_file.download_to_drive()
+            
+            sent_rubika_message = await rubika_bot.send_file(
                 RUBIKA_DESTINATION_CHANNEL_ID,
-                file=str(file_path)
+                file=str(file_path),
+                text=caption,
+                type=file_type if file_type != 'File' else None
             )
-            print("--> ویس با موفقیت به کانال روبیکا ارسال شد.")
+            print(f"--> فایل از نوع '{file_type}' با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
 
         if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
             telegram_id = message.message_id
             rubika_id = sent_rubika_message.message_id
-            message_map[telegram_id] = rubika_id
-            print(f"  -> شناسه ها ثبت شد: تلگرام({telegram_id}) -> روبیکا({rubika_id})")
+            message_map[str(telegram_id)] = rubika_id # کلید جیسان باید رشته باشد
+            save_data_to_file('message_map.json', message_map)
+            print(f"  -> شناسه ها ثبت و ذخیره شد: تلگرام({telegram_id}) -> روبیکا({rubika_id})")
+            
+            # افزایش شمارنده آمار
+            stats["forwarded_messages"] += 1
+            save_data_to_file('stats.json', stats)
         else:
             print("--> پیام از نوع پشتیبانی نشده و نادیده گرفته شد.")
             
@@ -102,14 +115,13 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
     print(f"==============================================\n")
 
-# ... (تابع telegram_edited_channel_handler و main بدون تغییر باقی می مانند)
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     edited_message = update.edited_channel_post
     if not (edited_message and rubika_bot): return
     print(f"\n==============================================")
     print(f"یک پیام ویرایش شده از تلگرام دریافت شد.")
     try:
-        telegram_id = edited_message.message_id
+        telegram_id = str(edited_message.message_id) # کلید جیسان باید رشته باشد
         if telegram_id in message_map:
             rubika_id = message_map[telegram_id]
             new_content = edited_message.text or edited_message.caption or ""
@@ -121,18 +133,33 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
     print(f"==============================================\n")
 
+# --- تابع جدید برای دستورات ادمین ---
+async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == '/stats':
+        count = stats.get("forwarded_messages", 0)
+        await update.message.reply_text(f"📊 آمار ربات:\n\nتعداد کل پیام های فوروارد شده: {count} عدد")
+
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
+    
+    # هندلر برای پیام های کانال
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.CHANNEL_POST,
         telegram_channel_handler
     ))
+    # هندلر برای ویرایش پیام های کانال
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.EDITED_CHANNEL_POST,
         telegram_edited_channel_handler
     ))
+    # هندلر برای دستورات ادمین
+    app.add_handler(MessageHandler(
+        filters.User(user_id=TELEGRAM_ADMIN_ID) & filters.COMMAND,
+        admin_command_handler
+    ))
+    
     print("==================================================")
-    print("ربات فورواردر (با قابلیت ویس) آنلاین شد...")
+    print("ربات فورواردر کامل (با ذخیره دائمی و آمار) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
