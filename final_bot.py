@@ -1,18 +1,20 @@
 import asyncio
 import os
 import json
-from telegram import Update
-from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes
-from rubpy import BotClient # <<< این خط اضافه شده است
+from telegram import Update, ReplyKeyboardMarkup
+# CommandHandler را به این خط اضافه می کنیم
+from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
+from rubpy import BotClient
 
 # ===============================================================
-# بخش تنظیمات
+# بخش تنظیمات (بدون تغییر)
 # ===============================================================
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
-    TELEGRAM_ADMIN_ID = os.environ.get("TELEGRAM_ADMIN_ID", "")
-    TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in TELEGRAM_ADMIN_ID.split(',')]
+    
+    ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
+    TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
     
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
     RUBIKA_DESTINATION_CHANNEL_ID = os.environ.get("RUBIKA_DESTINATION_CHANNEL_ID")
@@ -32,12 +34,9 @@ PORT = int(os.environ.get("PORT", 10000))
 rubika_bot: BotClient | None = None
 # ... (بقیه کد شما دقیقاً مثل قبل است و نیازی به تغییر ندارد)
 
-# ... (ادامه کد تا انتها)
-
 # --- توابع مدیریت فایل برای ذخیره دائمی ---
 
 def load_data_from_file(filename, default_data):
-    """اطلاعات را از یک فایل جیسان می خواند"""
     try:
         with open(filename, 'r') as f:
             return json.load(f)
@@ -45,12 +44,12 @@ def load_data_from_file(filename, default_data):
         return default_data
 
 def save_data_to_file(filename, data):
-    """اطلاعات را در یک فایل جیسان ذخیره می کند"""
     with open(filename, 'w') as f:
         json.dump(data, f, indent=4)
-        
+
 message_map = {}
 stats = {"forwarded_messages": 0}
+telegram_app: Application | None = None
 
 async def post_init(application: Application):
     global rubika_bot, message_map, stats, telegram_app
@@ -64,7 +63,6 @@ async def post_init(application: Application):
     stats = load_data_from_file('stats.json', {"forwarded_messages": 0})
     print("اطلاعات قبلی (شناسه ها و آمار) با موفقیت بارگذاری شد.")
     
-    # ارسال پیام خوشامدگویی به ادمین ها
     for admin_id in TELEGRAM_ADMIN_IDS:
         try:
             await telegram_app.bot.send_message(chat_id=admin_id, text="✅ ربات با موفقیت آنلاین و راه‌اندازی شد.")
@@ -133,7 +131,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
-        # ارسال خطا به ادمین ها
         error_text = f"❌ یک خطا در هنگام فوروارد کردن پیام رخ داد:\n\n`{e}`"
         for admin_id in TELEGRAM_ADMIN_IDS:
             try:
@@ -164,21 +161,15 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
 
 # --- توابع جدید برای دستورات ادمین ---
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """دستور /admin را مدیریت می کند و کیبورد را نمایش می دهد"""
-    keyboard = [
-        ["📊 آمار (/stats)"],
-        ["⚙️ وضعیت ربات (/status)"],
-    ]
+    keyboard = [["📊 آمار (/stats)"], ["⚙️ وضعیت ربات (/status)"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("پنل مدیریت:", reply_markup=reply_markup)
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """دستور /stats را مدیریت می کند"""
     count = stats.get("forwarded_messages", 0)
     await update.message.reply_text(f"📊 آمار ربات:\n\nتعداد کل پیام های فوروارد شده: {count} عدد")
 
 async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """دستور /status را مدیریت می کند"""
     status_text = (
         f"✅ ربات فعال و در حال کار است.\n\n"
         f"کانال تلگرام: `{TELEGRAM_SOURCE_CHANNEL_ID}`\n"
@@ -189,18 +180,15 @@ async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     
-    # هندلر برای پیام های کانال
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.CHANNEL_POST,
         telegram_channel_handler
     ))
-    # هندلر برای ویرایش پیام های کانال
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.EDITED_CHANNEL_POST,
         telegram_edited_channel_handler
     ))
     
-    # هندلرهای جدید برای دستورات ادمین
     app.add_handler(CommandHandler("admin", admin_panel, filters=filters.User(user_id=TELEGRAM_ADMIN_IDS)))
     app.add_handler(CommandHandler("stats", admin_stats, filters=filters.User(user_id=TELEGRAM_ADMIN_IDS)))
     app.add_handler(CommandHandler("status", admin_status, filters=filters.User(user_id=TELEGRAM_ADMIN_IDS)))
