@@ -1,8 +1,9 @@
 import asyncio
 import os
 import json
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
+from telegram import Update
+from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes
+from rubpy import BotClient # <<< این خط اضافه شده است
 
 # ===============================================================
 # بخش تنظیمات
@@ -10,9 +11,8 @@ from telegram.ext import Application, ApplicationBuilder, MessageHandler, filter
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
-    
-    ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
-    TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
+    TELEGRAM_ADMIN_ID = os.environ.get("TELEGRAM_ADMIN_ID", "")
+    TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in TELEGRAM_ADMIN_ID.split(',')]
     
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
     RUBIKA_DESTINATION_CHANNEL_ID = os.environ.get("RUBIKA_DESTINATION_CHANNEL_ID")
@@ -26,17 +26,18 @@ except (TypeError, ValueError):
 PORT = int(os.environ.get("PORT", 10000))
 
 # ===============================================================
-# بخش اصلی کد
+# بخش اصلی کد (بقیه کد بدون تغییر است)
 # ===============================================================
 
 rubika_bot: BotClient | None = None
-telegram_app: Application | None = None
-message_map = {}
-stats = {"forwarded_messages": 0}
+# ... (بقیه کد شما دقیقاً مثل قبل است و نیازی به تغییر ندارد)
+
+# ... (ادامه کد تا انتها)
 
 # --- توابع مدیریت فایل برای ذخیره دائمی ---
 
 def load_data_from_file(filename, default_data):
+    """اطلاعات را از یک فایل جیسان می خواند"""
     try:
         with open(filename, 'r') as f:
             return json.load(f)
@@ -44,10 +45,12 @@ def load_data_from_file(filename, default_data):
         return default_data
 
 def save_data_to_file(filename, data):
+    """اطلاعات را در یک فایل جیسان ذخیره می کند"""
     with open(filename, 'w') as f:
         json.dump(data, f, indent=4)
-
-# --- توابع اصلی ربات ---
+        
+message_map = {}
+stats = {"forwarded_messages": 0}
 
 async def post_init(application: Application):
     global rubika_bot, message_map, stats, telegram_app
@@ -63,8 +66,10 @@ async def post_init(application: Application):
     
     # ارسال پیام خوشامدگویی به ادمین ها
     for admin_id in TELEGRAM_ADMIN_IDS:
-        await telegram_app.bot.send_message(chat_id=admin_id, text="✅ ربات با موفقیت آنلاین و راه‌اندازی شد.")
-
+        try:
+            await telegram_app.bot.send_message(chat_id=admin_id, text="✅ ربات با موفقیت آنلاین و راه‌اندازی شد.")
+        except Exception as e:
+            print(f"خطا در ارسال پیام به ادمین {admin_id}: {e}")
 
 async def post_shutdown(application: Application):
     if rubika_bot:
@@ -83,7 +88,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
         caption = message.caption or ""
         sent_rubika_message = None
         
-        # بررسی قابلیت ریپلای
         reply_to_rubika_id = None
         if message.reply_to_message:
             reply_to_telegram_id = str(message.reply_to_message.message_id)
@@ -132,7 +136,10 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
         # ارسال خطا به ادمین ها
         error_text = f"❌ یک خطا در هنگام فوروارد کردن پیام رخ داد:\n\n`{e}`"
         for admin_id in TELEGRAM_ADMIN_IDS:
-            await telegram_app.bot.send_message(chat_id=admin_id, text=error_text)
+            try:
+                await telegram_app.bot.send_message(chat_id=admin_id, text=error_text)
+            except Exception as e_admin:
+                 print(f"خطا در ارسال پیام خطا به ادمین {admin_id}: {e_admin}")
 
     print(f"==============================================\n")
 
@@ -178,7 +185,6 @@ async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"کانال روبیکا: `{RUBIKA_DESTINATION_CHANNEL_ID}`"
     )
     await update.message.reply_text(status_text)
-
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
