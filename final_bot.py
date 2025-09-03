@@ -1,9 +1,8 @@
 import asyncio
 import os
 import json
-from telegram import Update
-from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes
-from rubpy import BotClient
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 
 # ===============================================================
 # بخش تنظیمات
@@ -12,7 +11,6 @@ try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
     
-    # خواندن لیست ادمین ها از متغیر محیطی
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
     
@@ -32,8 +30,11 @@ PORT = int(os.environ.get("PORT", 10000))
 # ===============================================================
 
 rubika_bot: BotClient | None = None
+telegram_app: Application | None = None
 message_map = {}
 stats = {"forwarded_messages": 0}
+
+# --- توابع مدیریت فایل برای ذخیره دائمی ---
 
 def load_data_from_file(filename, default_data):
     try:
@@ -46,8 +47,11 @@ def save_data_to_file(filename, data):
     with open(filename, 'w') as f:
         json.dump(data, f, indent=4)
 
+# --- توابع اصلی ربات ---
+
 async def post_init(application: Application):
-    global rubika_bot, message_map, stats
+    global rubika_bot, message_map, stats, telegram_app
+    telegram_app = application
     print("در حال ساخت و فعال سازی کلاینت روبیکا...")
     rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
     await rubika_bot.start()
@@ -56,6 +60,11 @@ async def post_init(application: Application):
     message_map = load_data_from_file('message_map.json', {})
     stats = load_data_from_file('stats.json', {"forwarded_messages": 0})
     print("اطلاعات قبلی (شناسه ها و آمار) با موفقیت بارگذاری شد.")
+    
+    # ارسال پیام خوشامدگویی به ادمین ها
+    for admin_id in TELEGRAM_ADMIN_IDS:
+        await telegram_app.bot.send_message(chat_id=admin_id, text="✅ ربات با موفقیت آنلاین و راه‌اندازی شد.")
+
 
 async def post_shutdown(application: Application):
     if rubika_bot:
@@ -64,7 +73,7 @@ async def post_shutdown(application: Application):
         print("کلاینت روبیکا با موفقیت متوقف شد.")
 
 async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global stats
+    global stats, telegram_app
     message = update.channel_post
     if not (message and rubika_bot): return
 
@@ -73,9 +82,21 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     try:
         caption = message.caption or ""
         sent_rubika_message = None
+        
+        # بررسی قابلیت ریپلای
+        reply_to_rubika_id = None
+        if message.reply_to_message:
+            reply_to_telegram_id = str(message.reply_to_message.message_id)
+            if reply_to_telegram_id in message_map:
+                reply_to_rubika_id = message_map[reply_to_telegram_id]
+                print(f"  -> پیام در پاسخ به پیام {reply_to_rubika_id} در روبیکا ارسال خواهد شد.")
 
         if message.text:
-            sent_rubika_message = await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, message.text)
+            sent_rubika_message = await rubika_bot.send_message(
+                RUBIKA_DESTINATION_CHANNEL_ID,
+                message.text,
+                reply_to_message_id=reply_to_rubika_id
+            )
             print("--> پیام متنی با موفقیت به کانال روبیکا ارسال شد.")
         elif message.photo or message.video or message.document:
             file_to_process = message.photo[-1] if message.photo else (message.video or message.document)
@@ -88,7 +109,8 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
                 RUBIKA_DESTINATION_CHANNEL_ID,
                 file=str(file_path),
                 text=caption,
-                type=file_type if file_type != 'File' else None
+                type=file_type if file_type != 'File' else None,
+                reply_to_message_id=reply_to_rubika_id
             )
             print(f"--> فایل از نوع '{file_type}' با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
@@ -107,9 +129,15 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
+        # ارسال خطا به ادمین ها
+        error_text = f"❌ یک خطا در هنگام فوروارد کردن پیام رخ داد:\n\n`{e}`"
+        for admin_id in TELEGRAM_ADMIN_IDS:
+            await telegram_app.bot.send_message(chat_id=admin_id, text=error_text)
+
     print(f"==============================================\n")
 
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (این تابع بدون تغییر باقی می ماند)
     edited_message = update.edited_channel_post
     if not (edited_message and rubika_bot): return
     print(f"\n==============================================")
@@ -127,31 +155,52 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
     print(f"==============================================\n")
 
-async def admin_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == '/stats':
-        count = stats.get("forwarded_messages", 0)
-        await update.message.reply_text(f"📊 آمار ربات:\n\nتعداد کل پیام های فوروارد شده: {count} عدد")
+# --- توابع جدید برای دستورات ادمین ---
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور /admin را مدیریت می کند و کیبورد را نمایش می دهد"""
+    keyboard = [
+        ["📊 آمار (/stats)"],
+        ["⚙️ وضعیت ربات (/status)"],
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("پنل مدیریت:", reply_markup=reply_markup)
+
+async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور /stats را مدیریت می کند"""
+    count = stats.get("forwarded_messages", 0)
+    await update.message.reply_text(f"📊 آمار ربات:\n\nتعداد کل پیام های فوروارد شده: {count} عدد")
+
+async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دستور /status را مدیریت می کند"""
+    status_text = (
+        f"✅ ربات فعال و در حال کار است.\n\n"
+        f"کانال تلگرام: `{TELEGRAM_SOURCE_CHANNEL_ID}`\n"
+        f"کانال روبیکا: `{RUBIKA_DESTINATION_CHANNEL_ID}`"
+    )
+    await update.message.reply_text(status_text)
+
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     
+    # هندلر برای پیام های کانال
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.CHANNEL_POST,
         telegram_channel_handler
     ))
+    # هندلر برای ویرایش پیام های کانال
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.EDITED_CHANNEL_POST,
         telegram_edited_channel_handler
     ))
     
-    # استفاده از لیست ادمین ها در فیلتر
-    app.add_handler(MessageHandler(
-        filters.User(user_id=TELEGRAM_ADMIN_IDS) & filters.COMMAND,
-        admin_command_handler
-    ))
+    # هندلرهای جدید برای دستورات ادمین
+    app.add_handler(CommandHandler("admin", admin_panel, filters=filters.User(user_id=TELEGRAM_ADMIN_IDS)))
+    app.add_handler(CommandHandler("stats", admin_stats, filters=filters.User(user_id=TELEGRAM_ADMIN_IDS)))
+    app.add_handler(CommandHandler("status", admin_status, filters=filters.User(user_id=TELEGRAM_ADMIN_IDS)))
     
     print("==================================================")
-    print("ربات فورواردر کامل (با چند ادمین) آنلاین شد...")
+    print("ربات فورواردر کامل (با قابلیت های مدیریتی) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
