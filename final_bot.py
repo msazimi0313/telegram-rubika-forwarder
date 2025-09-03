@@ -2,7 +2,8 @@ import asyncio
 import os
 import json
 from datetime import datetime
-import pytz # <-- کتابخانه جدید برای کار با منطقه زمانی
+import pytz
+import jdatetime # <-- کتابخانه جدید برای کار با تاریخ شمسی
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 from rubpy import BotClient
@@ -27,7 +28,7 @@ except (TypeError, ValueError):
     exit()
 
 PORT = int(os.environ.get("PORT", 10000))
-IRAN_TIMEZONE = pytz.timezone('Asia/Tehran') # <-- تعریف منطقه زمانی ایران
+IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
 
 # ===============================================================
 # بخش اصلی کد
@@ -90,7 +91,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     print(f"\n==============================================")
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
-        # ... (منطق فوروارد کردن مثل قبل است)
         caption = message.caption or ""
         sent_rubika_message = None
         message_type = "unknown"
@@ -128,7 +128,7 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             message_map[str(telegram_id)] = rubika_id
             save_data_to_file('message_map.json', message_map)
             
-            # *** آپدیت آمار با زمان ایران ***
+            # *** آپدیت آمار با زمان ایران (میلادی) ***
             stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
             if message_type in stats["by_type"]: stats["by_type"][message_type] = stats["by_type"].get(message_type, 0) + 1
             stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
@@ -138,7 +138,7 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
-        # *** آپدیت آمار خطا با زمان ایران ***
+        # *** آپدیت آمار خطا با زمان ایران (میلادی) ***
         stats["errors"] = stats.get("errors", 0) + 1
         stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
         save_data_to_file('stats.json', stats)
@@ -175,7 +175,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("پنل مدیریت:", reply_markup=reply_markup)
 
-# *** تابع آمار با نمایش زمان به وقت ایران ***
+# *** تابع آمار با نمایش تاریخ و زمان شمسی ***
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats_text = f"📊 **آمار عملکرد ربات فورواردر**\n\n"
     stats_text += f"کل پیام‌های فوروارد شده: **{stats.get('total_forwarded', 0)}**\n\n"
@@ -187,11 +187,15 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats_text += f"📄 فایل: {stats.get('by_type', {}).get('document', 0)}\n\n"
     stats_text += f"**— وضعیت سلامت ربات —**\n"
     stats_text += f"❗️ تعداد خطاها: **{stats.get('errors', 0)}**\n"
-    last_activity = stats.get('last_activity_time')
-    if last_activity:
-        last_activity_dt = datetime.fromisoformat(last_activity)
-        last_activity_str = last_activity_dt.strftime('%Y-%m-%d %H:%M:%S')
-        stats_text += f"⏰ آخرین فعالیت (به وقت ایران): {last_activity_str}\n"
+    last_activity_iso = stats.get('last_activity_time')
+    if last_activity_iso:
+        # 1. تبدیل رشته ذخیره شده به آبجکت datetime
+        gregorian_dt = datetime.fromisoformat(last_activity_iso)
+        # 2. تبدیل تاریخ میلادی به شمسی
+        jalali_dt = jdatetime.datetime.fromgregorian(datetime=gregorian_dt)
+        # 3. فرمت دهی به صورت خوانا
+        jalali_str = jalali_dt.strftime('%Y/%m/%d - %H:%M:%S')
+        stats_text += f"⏰ آخرین فعالیت (به وقت ایران): {jalali_str}\n"
     await update.message.reply_text(stats_text, parse_mode='Markdown')
 
 # ... (توابع admin_status و unauthorized_user_handler بدون تغییر)
@@ -239,7 +243,7 @@ def main():
     app.add_handler(MessageHandler(filters.COMMAND & (~admin_filter), unauthorized_user_handler))
     
     print("==================================================")
-    print("ربات فورواردر کامل (با زمان ایران) آنلاین شد...")
+    print("ربات فورواردر کامل (با تاریخ شمسی) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
