@@ -2,20 +2,24 @@ import asyncio
 import os
 import json
 from datetime import datetime
+import pytz # <-- کتابخانه جدید برای کار با منطقه زمانی
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 from rubpy import BotClient
 
 # ===============================================================
-# بخش تنظیمات (بدون تغییر)
+# بخش تنظیمات
 # ===============================================================
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     TELEGRAM_SOURCE_CHANNEL_ID = int(os.environ.get("TELEGRAM_SOURCE_CHANNEL_ID"))
+    
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
+    
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
     RUBIKA_DESTINATION_CHANNEL_ID = os.environ.get("RUBIKA_DESTINATION_CHANNEL_ID")
+    
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
     PYTHONUNBUFFERED = os.environ.get("PYTHONUNBUFFERED")
 except (TypeError, ValueError):
@@ -23,15 +27,16 @@ except (TypeError, ValueError):
     exit()
 
 PORT = int(os.environ.get("PORT", 10000))
+IRAN_TIMEZONE = pytz.timezone('Asia/Tehran') # <-- تعریف منطقه زمانی ایران
 
 # ===============================================================
 # بخش اصلی کد
 # ===============================================================
-
+# ... (بقیه کد تا تابع telegram_channel_handler بدون تغییر است)
 rubika_bot: BotClient | None = None
 telegram_app: Application | None = None
 message_map = {}
-stats = {} # در ابتدا خالی تعریف می کنیم
+stats = {}
 
 def load_data_from_file(filename, default_data):
     try:
@@ -42,7 +47,6 @@ def load_data_from_file(filename, default_data):
 def save_data_to_file(filename, data):
     with open(filename, 'w') as f: json.dump(data, f, indent=4)
 
-# *** تابع post_init با منطق بارگذاری هوشمند آمار ***
 async def post_init(application: Application):
     global rubika_bot, message_map, stats, telegram_app
     telegram_app = application
@@ -53,7 +57,6 @@ async def post_init(application: Application):
     
     message_map = load_data_from_file('message_map.json', {})
     
-    # بارگذاری آمار با ساختار هوشمند و مقاوم در برابر خطا
     loaded_stats = load_data_from_file('stats.json', {})
     default_stats = {
         "total_forwarded": 0,
@@ -61,7 +64,6 @@ async def post_init(application: Application):
         "errors": 0,
         "last_activity_time": None
     }
-    # ادغام آمار قدیمی در ساختار جدید برای اطمینان از وجود تمام کلیدها
     stats = default_stats
     stats.update(loaded_stats)
     if 'by_type' in loaded_stats and isinstance(loaded_stats.get('by_type'), dict):
@@ -75,7 +77,6 @@ async def post_init(application: Application):
         except Exception as e:
             print(f"خطا در ارسال پیام به ادمین {admin_id}: {e}")
 
-# ... (بقیه توابع شما دقیقاً مثل قبل است و نیازی به تغییر ندارد)
 async def post_shutdown(application: Application):
     if rubika_bot:
         print("در حال متوقف کردن کلاینت روبیکا...")
@@ -89,6 +90,7 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     print(f"\n==============================================")
     print(f"یک پیام جدید از کانال تلگرام دریافت شد.")
     try:
+        # ... (منطق فوروارد کردن مثل قبل است)
         caption = message.caption or ""
         sent_rubika_message = None
         message_type = "unknown"
@@ -119,21 +121,26 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             )
             print(f"--> فایل از نوع '{message_type}' با موفقیت به کانال روبیکا ارسال شد.")
             os.remove(file_path)
+
         if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
             telegram_id = message.message_id
             rubika_id = sent_rubika_message.message_id
             message_map[str(telegram_id)] = rubika_id
             save_data_to_file('message_map.json', message_map)
+            
+            # *** آپدیت آمار با زمان ایران ***
             stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
             if message_type in stats["by_type"]: stats["by_type"][message_type] = stats["by_type"].get(message_type, 0) + 1
-            stats["last_activity_time"] = datetime.now().isoformat()
+            stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
             save_data_to_file('stats.json', stats)
         else:
             print("--> پیام از نوع پشتیبانی نشده و نادیده گرفته شد.")
+            
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
+        # *** آپدیت آمار خطا با زمان ایران ***
         stats["errors"] = stats.get("errors", 0) + 1
-        stats["last_activity_time"] = datetime.now().isoformat()
+        stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
         save_data_to_file('stats.json', stats)
         error_text = f"❌ یک خطا در هنگام فوروارد کردن پیام رخ داد:\n\n`{e}`"
         for admin_id in TELEGRAM_ADMIN_IDS:
@@ -143,6 +150,7 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
                  print(f"خطا در ارسال پیام خطا به ادمین {admin_id}: {e_admin}")
     print(f"==============================================\n")
 
+# ... (تابع telegram_edited_channel_handler بدون تغییر)
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     edited_message = update.edited_channel_post
     if not (edited_message and rubika_bot): return
@@ -161,11 +169,13 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
     print(f"==============================================\n")
 
+# ... (تابع admin_panel بدون تغییر)
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["📊 آمار (/stats)"], ["⚙️ وضعیت ربات (/status)"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("پنل مدیریت:", reply_markup=reply_markup)
 
+# *** تابع آمار با نمایش زمان به وقت ایران ***
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats_text = f"📊 **آمار عملکرد ربات فورواردر**\n\n"
     stats_text += f"کل پیام‌های فوروارد شده: **{stats.get('total_forwarded', 0)}**\n\n"
@@ -181,9 +191,10 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if last_activity:
         last_activity_dt = datetime.fromisoformat(last_activity)
         last_activity_str = last_activity_dt.strftime('%Y-%m-%d %H:%M:%S')
-        stats_text += f"⏰ آخرین فعالیت: {last_activity_str}\n"
+        stats_text += f"⏰ آخرین فعالیت (به وقت ایران): {last_activity_str}\n"
     await update.message.reply_text(stats_text, parse_mode='Markdown')
 
+# ... (توابع admin_status و unauthorized_user_handler بدون تغییر)
 async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_text = (
         f"✅ ربات فعال و در حال کار است.\n\n"
@@ -203,6 +214,7 @@ async def unauthorized_user_handler(update: Update, context: ContextTypes.DEFAUL
     await update.message.reply_text(unauthorized_text)
 
 def main():
+    # ... (بخش main بدون تغییر)
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     
     admin_filter = filters.User(user_id=TELEGRAM_ADMIN_IDS)
@@ -227,7 +239,7 @@ def main():
     app.add_handler(MessageHandler(filters.COMMAND & (~admin_filter), unauthorized_user_handler))
     
     print("==================================================")
-    print("ربات فورواردر کامل (با تمام قابلیت های مدیریتی) آنلاین شد...")
+    print("ربات فورواردر کامل (با زمان ایران) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
