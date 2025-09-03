@@ -3,7 +3,7 @@ import os
 import json
 from datetime import datetime
 import pytz
-import jdatetime # <-- کتابخانه جدید برای کار با تاریخ شمسی
+import jdatetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 from rubpy import BotClient
@@ -33,11 +33,20 @@ IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
 # ===============================================================
 # بخش اصلی کد
 # ===============================================================
-# ... (بقیه کد تا تابع telegram_channel_handler بدون تغییر است)
+
 rubika_bot: BotClient | None = None
 telegram_app: Application | None = None
 message_map = {}
 stats = {}
+
+def get_default_stats():
+    """یک ساختار خالی و پیش فرض برای آمار برمی گرداند"""
+    return {
+        "total_forwarded": 0,
+        "by_type": {"text": 0, "photo": 0, "video": 0, "document": 0, "audio": 0},
+        "errors": 0,
+        "last_activity_time": None
+    }
 
 def load_data_from_file(filename, default_data):
     try:
@@ -59,12 +68,7 @@ async def post_init(application: Application):
     message_map = load_data_from_file('message_map.json', {})
     
     loaded_stats = load_data_from_file('stats.json', {})
-    default_stats = {
-        "total_forwarded": 0,
-        "by_type": {"text": 0, "photo": 0, "video": 0, "document": 0, "audio": 0},
-        "errors": 0,
-        "last_activity_time": None
-    }
+    default_stats = get_default_stats()
     stats = default_stats
     stats.update(loaded_stats)
     if 'by_type' in loaded_stats and isinstance(loaded_stats.get('by_type'), dict):
@@ -127,8 +131,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             rubika_id = sent_rubika_message.message_id
             message_map[str(telegram_id)] = rubika_id
             save_data_to_file('message_map.json', message_map)
-            
-            # *** آپدیت آمار با زمان ایران (میلادی) ***
             stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
             if message_type in stats["by_type"]: stats["by_type"][message_type] = stats["by_type"].get(message_type, 0) + 1
             stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
@@ -138,7 +140,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
-        # *** آپدیت آمار خطا با زمان ایران (میلادی) ***
         stats["errors"] = stats.get("errors", 0) + 1
         stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
         save_data_to_file('stats.json', stats)
@@ -150,8 +151,8 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
                  print(f"خطا در ارسال پیام خطا به ادمین {admin_id}: {e_admin}")
     print(f"==============================================\n")
 
-# ... (تابع telegram_edited_channel_handler بدون تغییر)
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (بدون تغییر)
     edited_message = update.edited_channel_post
     if not (edited_message and rubika_bot): return
     print(f"\n==============================================")
@@ -169,14 +170,17 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
     print(f"==============================================\n")
 
-# ... (تابع admin_panel بدون تغییر)
+# --- توابع ادمین آپدیت شد ---
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["📊 آمار (/stats)"], ["⚙️ وضعیت ربات (/status)"]]
+    keyboard = [
+        ["📊 آمار (/stats)", "⚙️ وضعیت ربات (/status)"],
+        ["🗑 پاک کردن آمار (/clearstats)"]
+    ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("پنل مدیریت:", reply_markup=reply_markup)
 
-# *** تابع آمار با نمایش تاریخ و زمان شمسی ***
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (بدون تغییر)
     stats_text = f"📊 **آمار عملکرد ربات فورواردر**\n\n"
     stats_text += f"کل پیام‌های فوروارد شده: **{stats.get('total_forwarded', 0)}**\n\n"
     stats_text += f"**— تفکیک بر اساس نوع —**\n"
@@ -189,17 +193,14 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats_text += f"❗️ تعداد خطاها: **{stats.get('errors', 0)}**\n"
     last_activity_iso = stats.get('last_activity_time')
     if last_activity_iso:
-        # 1. تبدیل رشته ذخیره شده به آبجکت datetime
         gregorian_dt = datetime.fromisoformat(last_activity_iso)
-        # 2. تبدیل تاریخ میلادی به شمسی
         jalali_dt = jdatetime.datetime.fromgregorian(datetime=gregorian_dt)
-        # 3. فرمت دهی به صورت خوانا
         jalali_str = jalali_dt.strftime('%Y/%m/%d - %H:%M:%S')
         stats_text += f"⏰ آخرین فعالیت (به وقت ایران): {jalali_str}\n"
     await update.message.reply_text(stats_text, parse_mode='Markdown')
 
-# ... (توابع admin_status و unauthorized_user_handler بدون تغییر)
 async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (بدون تغییر)
     status_text = (
         f"✅ ربات فعال و در حال کار است.\n\n"
         f"کانال تلگرام: `{TELEGRAM_SOURCE_CHANNEL_ID}`\n"
@@ -207,7 +208,15 @@ async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(status_text)
 
+# --- تابع جدید برای پاک کردن آمار ---
+async def admin_clear_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global stats
+    stats = get_default_stats()
+    save_data_to_file('stats.json', stats)
+    await update.message.reply_text("🗑 آمار ربات با موفقیت پاک و صفر شد.")
+
 async def unauthorized_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ... (بدون تغییر)
     user_name = update.message.from_user.first_name
     unauthorized_text = (
         f" سلام {user_name} عزیز! 🌸\n\n"
@@ -218,11 +227,11 @@ async def unauthorized_user_handler(update: Update, context: ContextTypes.DEFAUL
     await update.message.reply_text(unauthorized_text)
 
 def main():
-    # ... (بخش main بدون تغییر)
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
     
     admin_filter = filters.User(user_id=TELEGRAM_ADMIN_IDS)
     
+    # ... (هندلرهای فورواردینگ بدون تغییر)
     app.add_handler(MessageHandler(
         filters.Chat(chat_id=TELEGRAM_SOURCE_CHANNEL_ID) & filters.UpdateType.CHANNEL_POST,
         telegram_channel_handler
@@ -232,6 +241,7 @@ def main():
         telegram_edited_channel_handler
     ))
     
+    # هندلرهای دستورات ادمین آپدیت شد
     app.add_handler(CommandHandler("admin", admin_panel, filters=admin_filter))
     
     stats_filter = (filters.COMMAND & filters.Regex('^/stats$')) | (filters.TEXT & filters.Regex('^📊 آمار'))
@@ -239,11 +249,15 @@ def main():
     
     status_filter = (filters.COMMAND & filters.Regex('^/status$')) | (filters.TEXT & filters.Regex('^⚙️ وضعیت ربات'))
     app.add_handler(MessageHandler(status_filter & admin_filter, admin_status))
-
+    
+    # هندلر جدید برای پاک کردن آمار
+    clear_stats_filter = (filters.COMMAND & filters.Regex('^/clearstats$')) | (filters.TEXT & filters.Regex('^🗑 پاک کردن آمار'))
+    app.add_handler(MessageHandler(clear_stats_filter & admin_filter, admin_clear_stats))
+    
     app.add_handler(MessageHandler(filters.COMMAND & (~admin_filter), unauthorized_user_handler))
     
     print("==================================================")
-    print("ربات فورواردر کامل (با تاریخ شمسی) آنلاین شد...")
+    print("ربات فورواردر کامل (با تمام قابلیت های مدیریتی) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
