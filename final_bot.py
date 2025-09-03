@@ -1,13 +1,12 @@
 import asyncio
 import os
 import json
-from telegram import Update, ReplyKeyboardMarkup
-# CommandHandler را به این خط اضافه می کنیم
+from telegram import Update
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 from rubpy import BotClient
 
 # ===============================================================
-# بخش تنظیمات (بدون تغییر)
+# بخش تنظیمات
 # ===============================================================
 try:
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -28,28 +27,22 @@ except (TypeError, ValueError):
 PORT = int(os.environ.get("PORT", 10000))
 
 # ===============================================================
-# بخش اصلی کد (بقیه کد بدون تغییر است)
+# بخش اصلی کد
 # ===============================================================
 
 rubika_bot: BotClient | None = None
-# ... (بقیه کد شما دقیقاً مثل قبل است و نیازی به تغییر ندارد)
-
-# --- توابع مدیریت فایل برای ذخیره دائمی ---
+telegram_app: Application | None = None
+message_map = {}
+stats = {"forwarded_messages": 0}
 
 def load_data_from_file(filename, default_data):
     try:
-        with open(filename, 'r') as f:
-            return json.load(f)
+        with open(filename, 'r') as f: return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return default_data
 
 def save_data_to_file(filename, data):
-    with open(filename, 'w') as f:
-        json.dump(data, f, indent=4)
-
-message_map = {}
-stats = {"forwarded_messages": 0}
-telegram_app: Application | None = None
+    with open(filename, 'w') as f: json.dump(data, f, indent=4)
 
 async def post_init(application: Application):
     global rubika_bot, message_map, stats, telegram_app
@@ -91,14 +84,9 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             reply_to_telegram_id = str(message.reply_to_message.message_id)
             if reply_to_telegram_id in message_map:
                 reply_to_rubika_id = message_map[reply_to_telegram_id]
-                print(f"  -> پیام در پاسخ به پیام {reply_to_rubika_id} در روبیکا ارسال خواهد شد.")
 
         if message.text:
-            sent_rubika_message = await rubika_bot.send_message(
-                RUBIKA_DESTINATION_CHANNEL_ID,
-                message.text,
-                reply_to_message_id=reply_to_rubika_id
-            )
+            sent_rubika_message = await rubika_bot.send_message(RUBIKA_DESTINATION_CHANNEL_ID, message.text, reply_to_message_id=reply_to_rubika_id)
             print("--> پیام متنی با موفقیت به کانال روبیکا ارسال شد.")
         elif message.photo or message.video or message.document:
             file_to_process = message.photo[-1] if message.photo else (message.video or message.document)
@@ -107,11 +95,12 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             tg_file = await file_to_process.get_file()
             file_path = await tg_file.download_to_drive()
             
+            # *** تغییر اصلی اینجاست: ارسال مستقیم file_type ***
             sent_rubika_message = await rubika_bot.send_file(
                 RUBIKA_DESTINATION_CHANNEL_ID,
                 file=str(file_path),
                 text=caption,
-                type=file_type if file_type != 'File' else None,
+                type=file_type,
                 reply_to_message_id=reply_to_rubika_id
             )
             print(f"--> فایل از نوع '{file_type}' با موفقیت به کانال روبیکا ارسال شد.")
@@ -122,7 +111,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
             rubika_id = sent_rubika_message.message_id
             message_map[str(telegram_id)] = rubika_id
             save_data_to_file('message_map.json', message_map)
-            print(f"  -> شناسه ها ثبت و ذخیره شد: تلگرام({telegram_id}) -> روبیکا({rubika_id})")
             
             stats["forwarded_messages"] += 1
             save_data_to_file('stats.json', stats)
@@ -141,7 +129,7 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     print(f"==============================================\n")
 
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # ... (این تابع بدون تغییر باقی می ماند)
+    # ... (این تابع بدون تغییر است)
     edited_message = update.edited_channel_post
     if not (edited_message and rubika_bot): return
     print(f"\n==============================================")
@@ -159,7 +147,7 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
     print(f"==============================================\n")
 
-# --- توابع جدید برای دستورات ادمین ---
+# ... (توابع ادمین و main بدون تغییر هستند)
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["📊 آمار (/stats)"], ["⚙️ وضعیت ربات (/status)"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
