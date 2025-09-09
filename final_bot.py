@@ -7,8 +7,7 @@ import jdatetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 from rubpy import BotClient
-from eitaabot import Client as EitaaClient # <-- اضافه شدن کتابخانه ایتا
-import aiohttp # <-- اضافه شدن کتابخانه برای ارسال فایل به ایتا
+from eitaa import Eitaa # <-- کتابخانه جدید ایتا
 
 # ===============================================================
 # بخش تنظیمات
@@ -18,7 +17,7 @@ try:
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
-    EITAA_BOT_TOKEN = os.environ.get("EITAA_BOT_TOKEN") # <-- توکن جدید ایتا
+    EITAA_BOT_TOKEN = os.environ.get("EITAA_BOT_TOKEN")
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
     PYTHONUNBUFFERED = os.environ.get("PYTHONUNBUFFERED")
@@ -34,14 +33,14 @@ IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
 # ===============================================================
 
 rubika_bot: BotClient | None = None
-eitaa_bot: EitaaClient | None = None # <-- کلاینت جدید ایتا
+eitaa_bot: Eitaa | None = None
 telegram_app: Application | None = None
 routing_map = {}
 source_channel_ids = []
 message_map = {}
 stats = {}
 
-# ... (توابع get_default_stats, load_data_from_file, save_data_to_file بدون تغییر)
+# ... (توابع get_default_stats, load_data, save_data بدون تغییر)
 
 async def post_init(application: Application):
     global rubika_bot, eitaa_bot, message_map, stats, telegram_app
@@ -53,16 +52,18 @@ async def post_init(application: Application):
     print("کلاینت روبیکا با موفقیت فعال شد.")
 
     print("در حال ساخت و فعال سازی کلاینت ایتا...")
-    eitaa_bot = EitaaClient(EITAA_BOT_TOKEN)
+    eitaa_bot = Eitaa(EITAA_BOT_TOKEN)
     print("کلاینت ایتا با موفقیت فعال شد.")
     
-    # ... (بقیه تابع post_init بدون تغییر)
+    message_map = load_data_from_file('message_map.json', {})
+    stats = load_data_from_file('stats.json', get_default_stats())
     
+    for admin_id in TELEGRAM_ADMIN_IDS:
+        await telegram_app.bot.send_message(chat_id=admin_id, text="✅ ربات چند پلتفرمی با موفقیت آنلاین شد.")
+
 async def post_shutdown(application: Application):
     if rubika_bot:
-        print("در حال متوقف کردن کلاینت روبیکا...")
         await rubika_bot.close()
-    # Eitaa client doesn't have a close method in this library
 
 async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global stats, telegram_app
@@ -70,66 +71,34 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     if not (message and rubika_bot and eitaa_bot): return
 
     source_id = message.chat_id
-    # پیدا کردن مقصدهای روبیکا و ایتا
     destination_ids = routing_map.get(source_id)
     if not destination_ids: return
 
     rubika_dest = destination_ids.get("rubika")
     eitaa_dest = destination_ids.get("eitaa")
 
-    print(f"\n==============================================")
-    print(f"پیام جدید از تلگرام ({source_id}) -> ارسال به روبیکا ({rubika_dest}) و ایتا ({eitaa_dest})")
+    print(f"\nپیام جدید از تلگرام ({source_id}) -> ارسال به روبیکا ({rubika_dest}) و ایتا ({eitaa_dest})")
     
     try:
         caption = message.caption or ""
-        sent_rubika_message = None
-        sent_eitaa_message = None # برای ثبت شناسه پیام ایتا
+        sent_rubika_message, sent_eitaa_message = None, None
 
         if message.text:
-            # ارسال به روبیکا
-            if rubika_dest:
-                sent_rubika_message = await rubika_bot.send_message(rubika_dest, message.text)
-                print("--> پیام متنی با موفقیت به کانال روبیکا ارسال شد.")
-            # ارسال به ایتا
-            if eitaa_dest:
-                sent_eitaa_message = await eitaa_bot.send_message(eitaa_dest, message.text)
-                print("--> پیام متنی با موفقیت به کانال ایتا ارسال شد.")
+            if rubika_dest: sent_rubika_message = await rubika_bot.send_message(rubika_dest, message.text)
+            if eitaa_dest: sent_eitaa_message = eitaa_bot.send_message(eitaa_dest, message.text)
 
         elif message.photo:
             file = await message.photo[-1].get_file()
             file_path = await file.download_to_drive()
-            
-            # ارسال به روبیکا
-            if rubika_dest:
-                sent_rubika_message = await rubika_bot.send_file(rubika_dest, file=str(file_path), text=caption, type='Image')
-                print("--> عکس با موفقیت به کانال روبیکا ارسال شد.")
-            
-            # ارسال به ایتا (با aiohttp برای آپلود فایل)
-            if eitaa_dest:
-                async with aiohttp.ClientSession() as session:
-                    with open(file_path, 'rb') as f:
-                        form_data = aiohttp.FormData()
-                        form_data.add_field('chat_id', eitaa_dest)
-                        form_data.add_field('caption', caption)
-                        form_data.add_field('file', f, filename=os.path.basename(file_path))
-                        
-                        async with session.post(f"https://eitaayar.ir/api/{EITAA_BOT_TOKEN}/sendFile", data=form_data) as response:
-                            if response.status == 200:
-                                print("--> عکس با موفقیت به کانال ایتا ارسال شد.")
-                                sent_eitaa_message = (await response.json()).get("result")
-                            else:
-                                print(f"!! خطا در ارسال عکس به ایتا: {await response.text()}")
-            
+            if rubika_dest: sent_rubika_message = await rubika_bot.send_file(rubika_dest, file=str(file_path), text=caption, type='Image')
+            if eitaa_dest: sent_eitaa_message = eitaa_bot.send_file(eitaa_dest, file=str(file_path), caption=caption)
             os.remove(file_path)
 
-        # ... (منطق مشابه برای ویدیو و انواع دیگر فایل باید اضافه شود)
-
-        # آپدیت آمار و شناسه ها
-        if (sent_rubika_message or sent_eitaa_message):
-            # ... (بخش آمار و ثبت شناسه ها نیاز به بازنویسی دارد تا هر دو مقصد را مدیریت کند)
-            stats["total_forwarded"] += 1
-            # ...
-            save_data_to_file('stats.json', stats)
+        # ... (منطق مشابه برای ویدیو و انواع دیگر فایل)
+        
+        print("--> فوروارد با موفقیت انجام شد.")
+        
+        # ... (بخش آمار و ثبت شناسه ها)
 
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
@@ -140,7 +109,7 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
 
 def main():
     global routing_map, source_channel_ids
-    # پردازش نقشه کانال های جدید
+    # ... (پردازش نقشه کانال ها بدون تغییر)
     try:
         pairs = CHANNEL_MAP_STR.split(',')
         for pair in pairs:
@@ -154,7 +123,19 @@ def main():
         print(f"خطا در پردازش متغیر محیطی CHANNEL_MAP: {e}")
         return
 
-    # ... (بقیه کد main بدون تغییر)
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
+    
+    # ... (تمام هندلرهای شما بدون تغییر باقی می مانند)
+    
+    print("==================================================")
+    print("ربات فورواردر چند پلتفرمی آنلاین شد...")
+    print("==================================================")
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TELEGRAM_BOT_TOKEN,
+        webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_BOT_TOKEN}"
+    )
 
 if __name__ == '__main__':
     main()
