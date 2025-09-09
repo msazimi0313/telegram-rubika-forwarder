@@ -3,3 +3,5 @@ APScheduler==3.10.4
 rubpy
 pytz
 jdatetime
+Eitaabot
+aiohttp
