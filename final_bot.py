@@ -5,9 +5,10 @@ from datetime import datetime
 import pytz
 import jdatetime
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler, BaseRequest
+# <--- CHANGE: BaseRequest حذف شد
+from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 from rubpy import BotClient
-from pathlib import Path # <--- CHANGE: ماژول جدید برای کار با مسیر فایل
+from pathlib import Path
 
 # ===============================================================
 # بخش تنظیمات
@@ -18,7 +19,7 @@ try:
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
-    EITAA_BOT_TOKEN = os.environ.get("EITAA_BOT_TOKEN") # <--- CHANGE: توکن ربات ایتا
+    EITAA_BOT_TOKEN = os.environ.get("EITAA_BOT_TOKEN")
     WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
     PYTHONUNBUFFERED = os.environ.get("PYTHONUNBUFFERED")
 except (TypeError, ValueError):
@@ -34,7 +35,7 @@ IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
 
 rubika_bot: BotClient | None = None
 telegram_app: Application | None = None
-eitaa_app: Application | None = None # <--- CHANGE: اپلیکیشن جدا برای ایتا
+eitaa_app: Application | None = None
 routing_map = {}
 source_channel_ids = []
 message_map = {}
@@ -60,10 +61,14 @@ async def post_init(application: Application):
     await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
     
-    # <--- CHANGE: بخش جدید برای ساخت کلاینت ایتا
+    # <--- CHANGE: روش ساخت کلاینت ایتا اصلاح شد
     print("در حال ساخت و فعال سازی کلاینت ایتا...")
-    eitaa_request = BaseRequest(base_url='https://eitaa.com/bot')
-    eitaa_app = ApplicationBuilder().token(EITAA_BOT_TOKEN).request(eitaa_request).build()
+    eitaa_app = (
+        ApplicationBuilder()
+        .token(EITAA_BOT_TOKEN)
+        .base_url("https://eitaa.com/bot/")
+        .build()
+    )
     print("کلاینت ایتا با موفقیت فعال شد.")
 
     message_map = load_data_from_file('message_map.json', {})
@@ -99,17 +104,15 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     try:
         caption = message.caption or ""
         sent_rubika_message = None
-        sent_eitaa_message = None # <--- CHANGE
+        sent_eitaa_message = None
         message_type = "unknown"
-        file_path = None # <--- CHANGE
+        file_path = None
 
-        # دانلود فایل (فقط یک بار)
         if message.photo or message.video:
             file_to_process = message.photo[-1] if message.photo else message.video
             tg_file = await file_to_process.get_file()
             file_path = await tg_file.download_to_drive()
 
-        # ارسال به روبیکا
         if rubika_dest_id:
             try:
                 if message.text:
@@ -126,7 +129,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
                 for admin_id in TELEGRAM_ADMIN_IDS:
                     await telegram_app.bot.send_message(chat_id=admin_id, text=error_text)
 
-        # ارسال به ایتا
         if eitaa_dest_id:
             try:
                 if message.text:
@@ -135,10 +137,12 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
                 elif file_path:
                     if message.photo:
                         message_type = 'photo'
-                        sent_eitaa_message = await eitaa_app.bot.send_photo(chat_id=eitaa_dest_id, photo=open(file_path, 'rb'), caption=caption)
+                        with open(file_path, 'rb') as photo_file:
+                            sent_eitaa_message = await eitaa_app.bot.send_photo(chat_id=eitaa_dest_id, photo=photo_file, caption=caption)
                     elif message.video:
                         message_type = 'video'
-                        sent_eitaa_message = await eitaa_app.bot.send_video(chat_id=eitaa_dest_id, video=open(file_path, 'rb'), caption=caption)
+                        with open(file_path, 'rb') as video_file:
+                            sent_eitaa_message = await eitaa_app.bot.send_video(chat_id=eitaa_dest_id, video=video_file, caption=caption)
                 print(f"--> پیام '{message_type}' با موفقیت به ایتا ارسال شد.")
             except Exception as e:
                 print(f"!! خطا در ارسال به ایتا: {e}")
@@ -146,11 +150,9 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
                 for admin_id in TELEGRAM_ADMIN_IDS:
                     await telegram_app.bot.send_message(chat_id=admin_id, text=error_text)
 
-        # حذف فایل دانلود شده
         if file_path:
             os.remove(file_path)
 
-        # ذخیره سازی اطلاعات پیام های ارسال شده
         if sent_rubika_message or sent_eitaa_message:
             telegram_id = message.message_id
             mapping = {}
@@ -197,7 +199,6 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         if mapping:
             new_content = edited_message.text or edited_message.caption or ""
             
-            # ویرایش در روبیکا
             if "rubika_id" in mapping:
                 try:
                     await rubika_bot.edit_message_text(mapping["rubika_dest_id"], mapping["rubika_id"], new_content)
@@ -205,7 +206,6 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
                 except Exception as e:
                     print(f"!! خطا در ویرایش پیام روبیکا: {e}")
 
-            # ویرایش در ایتا
             if "eitaa_id" in mapping:
                 try:
                     if edited_message.text:
@@ -233,7 +233,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # این بخش بدون تغییر باقی می‌ماند
     stats_text = f"📊 **آمار عملکرد ربات فورواردر**\n\n"
     # ... (بقیه منطق آمار بدون تغییر)
-    await update.message.reply_text("... آمار ...") # جایگزین با منطق اصلی شما
+    await update.message.reply_text("... آمار ...")
 
 async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_text = "✅ ربات فعال و در حال کار است.\n\n"
@@ -261,7 +261,7 @@ def main():
         for pair in pairs:
             if ':' in pair:
                 parts = pair.split(':')
-                if len(parts) == 3: # <--- CHANGE: بررسی فرمت جدید
+                if len(parts) == 3:
                     tg_id, rb_id, et_id = parts
                     routing_map[int(tg_id.strip())] = {'rubika': rb_id.strip(), 'eitaa': et_id.strip()}
                 else:
