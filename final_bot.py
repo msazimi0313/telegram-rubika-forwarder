@@ -12,6 +12,23 @@ from rubpy import BotClient
 from pathlib import Path
 
 # ===============================================================
+# بخش کلاس سفارشی برای ایتا
+# ===============================================================
+
+# <--- CHANGE: تعریف کلاس جدید و اختصاصی برای اتصال به ایتا
+class EitaaRequest(BaseRequest):
+    """
+    یک کلاس سفارشی برای بازنویسی URL پیش‌فرض کتابخانه به آدرس سرور ایتا.
+    """
+    def __init__(self, *args, **kwargs):
+        # متد __init__ کلاس والد آرگومان نمی‌پذیرد، پس ما هم چیزی به آن پاس نمی‌دهیم.
+        super().__init__(*args, **kwargs)
+
+    def _build_url(self, bot_token: str, method: str) -> str:
+        """URL نهایی برای ارسال درخواست به API ایتا را می‌سازد."""
+        return f"https://eitaa.com/bot{bot_token}/{method}"
+
+# ===============================================================
 # بخش تنظیمات
 # ===============================================================
 try:
@@ -62,10 +79,10 @@ async def post_init(application: Application):
     await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
     
-    # <--- CHANGE: بازگشت به روش صحیح و پایدار برای ساخت کلاینت ایتا
+    # <--- CHANGE: استفاده از کلاس سفارشی EitaaRequest
     print("در حال ساخت و فعال سازی کلاینت ایتا...")
-    eitaa_request = BaseRequest(base_url='https://eitaa.com/bot')
-    eitaa_app = ApplicationBuilder().token(EITAA_BOT_TOKEN).request(eitaa_request).build()
+    eitaa_request_instance = EitaaRequest()
+    eitaa_app = ApplicationBuilder().token(EITAA_BOT_TOKEN).request(eitaa_request_instance).build()
     print("کلاینت ایتا با موفقیت فعال شد.")
 
     message_map = load_data_from_file('message_map.json', {})
@@ -83,6 +100,7 @@ async def post_shutdown(application: Application):
         await rubika_bot.close()
         print("کلاینت روبیکا با موفقیت متوقف شد.")
 
+# ... بقیه کد بدون هیچ تغییری باقی می‌ماند ...
 async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global stats, telegram_app, eitaa_app
     message = update.channel_post
@@ -134,12 +152,10 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
                 elif file_path:
                     if message.photo:
                         message_type = 'photo'
-                        # <--- CHANGE: استفاده از 'with' برای مدیریت بهتر فایل
                         with open(file_path, 'rb') as photo_file:
                             sent_eitaa_message = await eitaa_app.bot.send_photo(chat_id=eitaa_dest_id, photo=photo_file, caption=caption)
                     elif message.video:
                         message_type = 'video'
-                        # <--- CHANGE: استفاده از 'with' برای مدیریت بهتر فایل
                         with open(file_path, 'rb') as video_file:
                             sent_eitaa_message = await eitaa_app.bot.send_video(chat_id=eitaa_dest_id, video=video_file, caption=caption)
                 print(f"--> پیام '{message_type}' با موفقیت به ایتا ارسال شد.")
@@ -184,7 +200,6 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     
     print(f"==============================================\n")
 
-# ... بقیه کد بدون تغییر باقی می‌ماند ...
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     edited_message = update.edited_channel_post
     if not (edited_message and rubika_bot and eitaa_app): return
@@ -222,7 +237,6 @@ async def telegram_edited_channel_handler(update: Update, context: ContextTypes.
         print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
     
     print(f"==============================================\n")
-
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["📊 آمار (/stats)"], ["⚙️ وضعیت ربات (/status)"], ["🗑 پاک کردن آمار (/clearstats)"]]
