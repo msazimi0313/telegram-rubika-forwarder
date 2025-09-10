@@ -5,28 +5,27 @@ from datetime import datetime
 import pytz
 import jdatetime
 from telegram import Update, ReplyKeyboardMarkup
-# <--- CHANGE: وارد کردن BaseRequest از ماژول صحیح
-from telegram.request import BaseRequest
+# <--- CHANGE: وارد کردن HTTPXRequest به جای BaseRequest
+from telegram.request import HTTPXRequest
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 from rubpy import BotClient
 from pathlib import Path
 
 # ===============================================================
-# بخش کلاس سفارشی برای ایتا
+# بخش کلاس سفارشی برای ایتا (نسخه نهایی و صحیح)
 # ===============================================================
 
-# <--- CHANGE: تعریف کلاس جدید و اختصاصی برای اتصال به ایتا
-class EitaaRequest(BaseRequest):
+# <--- CHANGE: ارث‌بری از موتور کامل HTTPXRequest
+class EitaaRequest(HTTPXRequest):
     """
-    یک کلاس سفارشی برای بازنویسی URL پیش‌فرض کتابخانه به آدرس سرور ایتا.
+    این کلاس با ارث‌بری از کلاس پیش‌فرض کتابخانه، فقط آدرس پایه را
+    برای اتصال به سرور ایتا تغییر می‌دهد.
     """
     def __init__(self, *args, **kwargs):
-        # متد __init__ کلاس والد آرگومان نمی‌پذیرد، پس ما هم چیزی به آن پاس نمی‌دهیم.
+        # ابتدا متد سازنده والد را اجرا می‌کنیم تا تمام تنظیمات اولیه انجام شود
         super().__init__(*args, **kwargs)
-
-    def _build_url(self, bot_token: str, method: str) -> str:
-        """URL نهایی برای ارسال درخواست به API ایتا را می‌سازد."""
-        return f"https://eitaa.com/bot{bot_token}/{method}"
+        # حالا آدرس پایه را به آدرس ایتا تغییر می‌دهیم
+        self._base_url = 'https://eitaa.com/bot'
 
 # ===============================================================
 # بخش تنظیمات
@@ -79,7 +78,7 @@ async def post_init(application: Application):
     await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
     
-    # <--- CHANGE: استفاده از کلاس سفارشی EitaaRequest
+    # <--- CHANGE: استفاده از نمونه کلاس صحیح EitaaRequest
     print("در حال ساخت و فعال سازی کلاینت ایتا...")
     eitaa_request_instance = EitaaRequest()
     eitaa_app = ApplicationBuilder().token(EITAA_BOT_TOKEN).request(eitaa_request_instance).build()
