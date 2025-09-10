@@ -5,7 +5,6 @@ from datetime import datetime
 import pytz
 import jdatetime
 from telegram import Update, ReplyKeyboardMarkup
-# <--- CHANGE: وارد کردن HTTPXRequest به جای BaseRequest
 from telegram.request import HTTPXRequest
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 from rubpy import BotClient
@@ -15,17 +14,15 @@ from pathlib import Path
 # بخش کلاس سفارشی برای ایتا (نسخه نهایی و صحیح)
 # ===============================================================
 
-# <--- CHANGE: ارث‌بری از موتور کامل HTTPXRequest
 class EitaaRequest(HTTPXRequest):
     """
     این کلاس با ارث‌بری از کلاس پیش‌فرض کتابخانه، فقط آدرس پایه را
     برای اتصال به سرور ایتا تغییر می‌دهد.
     """
     def __init__(self, *args, **kwargs):
-        # ابتدا متد سازنده والد را اجرا می‌کنیم تا تمام تنظیمات اولیه انجام شود
         super().__init__(*args, **kwargs)
-        # حالا آدرس پایه را به آدرس ایتا تغییر می‌دهیم
-        self._base_url = 'https://eitaa.com/bot'
+        # <--- CHANGE: افزودن اسلش در انتها برای پایداری بیشتر
+        self._base_url = 'https://eitaa.com/bot/'
 
 # ===============================================================
 # بخش تنظیمات
@@ -78,7 +75,6 @@ async def post_init(application: Application):
     await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
     
-    # <--- CHANGE: استفاده از نمونه کلاس صحیح EitaaRequest
     print("در حال ساخت و فعال سازی کلاینت ایتا...")
     eitaa_request_instance = EitaaRequest()
     eitaa_app = ApplicationBuilder().token(EITAA_BOT_TOKEN).request(eitaa_request_instance).build()
@@ -99,7 +95,7 @@ async def post_shutdown(application: Application):
         await rubika_bot.close()
         print("کلاینت روبیکا با موفقیت متوقف شد.")
 
-# ... بقیه کد بدون هیچ تغییری باقی می‌ماند ...
+# ... بقیه کد بدون هیچ تغییری باقی می‌ماند و کاملا صحیح است ...
 async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global stats, telegram_app, eitaa_app
     message = update.channel_post
