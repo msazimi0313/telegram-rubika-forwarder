@@ -5,7 +5,8 @@ from datetime import datetime
 import pytz
 import jdatetime
 from telegram import Update, ReplyKeyboardMarkup
-# <--- CHANGE: BaseRequest حذف شد
+# <--- CHANGE: وارد کردن BaseRequest از ماژول صحیح
+from telegram.request import BaseRequest
 from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
 from rubpy import BotClient
 from pathlib import Path
@@ -61,14 +62,10 @@ async def post_init(application: Application):
     await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
     
-    # <--- CHANGE: روش ساخت کلاینت ایتا اصلاح شد
+    # <--- CHANGE: بازگشت به روش صحیح و پایدار برای ساخت کلاینت ایتا
     print("در حال ساخت و فعال سازی کلاینت ایتا...")
-    eitaa_app = (
-        ApplicationBuilder()
-        .token(EITAA_BOT_TOKEN)
-        .base_url("https://eitaa.com/bot/")
-        .build()
-    )
+    eitaa_request = BaseRequest(base_url='https://eitaa.com/bot')
+    eitaa_app = ApplicationBuilder().token(EITAA_BOT_TOKEN).request(eitaa_request).build()
     print("کلاینت ایتا با موفقیت فعال شد.")
 
     message_map = load_data_from_file('message_map.json', {})
@@ -137,10 +134,12 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
                 elif file_path:
                     if message.photo:
                         message_type = 'photo'
+                        # <--- CHANGE: استفاده از 'with' برای مدیریت بهتر فایل
                         with open(file_path, 'rb') as photo_file:
                             sent_eitaa_message = await eitaa_app.bot.send_photo(chat_id=eitaa_dest_id, photo=photo_file, caption=caption)
                     elif message.video:
                         message_type = 'video'
+                        # <--- CHANGE: استفاده از 'with' برای مدیریت بهتر فایل
                         with open(file_path, 'rb') as video_file:
                             sent_eitaa_message = await eitaa_app.bot.send_video(chat_id=eitaa_dest_id, video=video_file, caption=caption)
                 print(f"--> پیام '{message_type}' با موفقیت به ایتا ارسال شد.")
@@ -185,6 +184,7 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
     
     print(f"==============================================\n")
 
+# ... بقیه کد بدون تغییر باقی می‌ماند ...
 async def telegram_edited_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     edited_message = update.edited_channel_post
     if not (edited_message and rubika_bot and eitaa_app): return
