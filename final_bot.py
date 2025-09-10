@@ -21,8 +21,8 @@ class EitaaRequest(HTTPXRequest):
     """
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # <--- CHANGE: افزودن اسلش در انتها برای پایداری بیشتر
-        self._base_url = 'https://eitaa.com/bot/'
+        # <--- CHANGE: آدرس پایه باید فقط دامنه باشد. کتابخانه "bot" را خودش اضافه می‌کند.
+        self._base_url = 'https://eitaa.com/'
 
 # ===============================================================
 # بخش تنظیمات
