@@ -38,7 +38,12 @@ message_map = {}
 stats = {}
 
 def get_default_stats():
-    return {"total_forwarded": 0, "by_type": {}, "errors": 0, "last_activity_time": None}
+    return {
+        "total_forwarded": 0,
+        "by_type": {"text": 0, "photo": 0, "video": 0, "document": 0, "audio": 0, "voice": 0},
+        "errors": 0,
+        "last_activity_time": None
+    }
 
 def load_data_from_file(filename, default_data):
     try:
@@ -71,7 +76,7 @@ async def post_shutdown(application: Application):
         print("کلاینت روبیکا با موفقیت متوقف شد.")
 
 async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global stats, telegram_app
+    global stats, telegram_app, message_map
     message = update.channel_post
     if not (message and rubika_bot): return
     source_id = message.chat_id
@@ -83,30 +88,60 @@ async def telegram_channel_handler(update: Update, context: ContextTypes.DEFAULT
         caption = message.caption or ""
         sent_rubika_message = None
         message_type = "unknown"
+
         if message.text:
             message_type = "text"
             sent_rubika_message = await rubika_bot.send_message(destination_id, message.text)
-        elif message.photo or message.video:
-            file_to_process = message.photo[-1] if message.photo else message.video
-            message_type = 'photo' if message.photo else 'video'
-            rubika_file_type = 'Image' if message.photo else 'Video'
+        elif message.photo:
+            message_type = "photo"
+            file_to_process = message.photo[-1]
             tg_file = await file_to_process.get_file()
             file_path = await tg_file.download_to_drive()
-            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type=rubika_file_type)
+            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Image')
             os.remove(file_path)
-        print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد.")
-        if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
-            telegram_id = message.message_id
-            rubika_id = sent_rubika_message.message_id
-            message_map[str(telegram_id)] = {"rubika_id": rubika_id, "destination_id": destination_id}
-            save_data_to_file('message_map.json', message_map)
-            stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
-            if message_type not in stats.get("by_type", {}): stats["by_type"][message_type] = 0
-            stats["by_type"][message_type] += 1
-            stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
-            save_data_to_file('stats.json', stats)
+        elif message.video:
+            message_type = "video"
+            tg_file = await message.video.get_file()
+            file_path = await tg_file.download_to_drive()
+            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Video')
+            os.remove(file_path)
+        elif message.audio:
+            message_type = "audio"
+            audio = message.audio
+            caption = f"🎵 {audio.performer or ''} - {audio.title or ''}\n\n{caption}".strip()
+            tg_file = await audio.get_file()
+            file_path = await tg_file.download_to_drive()
+            sent_rubika_message = await rubika_bot.send_music(destination_id, file=str(file_path), text=caption)
+            os.remove(file_path)
+        elif message.voice:
+            message_type = "voice"
+            tg_file = await message.voice.get_file()
+            file_path = await tg_file.download_to_drive()
+            sent_rubika_message = await rubika_bot.send_voice(destination_id, file=str(file_path))
+            os.remove(file_path)
+        elif message.document:
+            message_type = "document"
+            tg_file = await message.document.get_file()
+            file_path = await tg_file.download_to_drive()
+            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='File')
+            os.remove(file_path)
+        
+        if message_type != "unknown":
+            print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد.")
+            if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
+                telegram_id = message.message_id
+                rubika_id = sent_rubika_message.message_id
+                message_map[str(telegram_id)] = {"rubika_id": rubika_id, "destination_id": destination_id}
+                save_data_to_file('message_map.json', message_map)
+                
+                if message_type not in stats.get("by_type", {}): stats["by_type"][message_type] = 0
+                stats["by_type"][message_type] += 1
+                stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
+                stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
+                save_data_to_file('stats.json', stats)
         else:
-            print("--> پیام از نوع پشتیبانی نشده و نادیده گرفته شد.")
+            print("--> پیام از نوع پشتیبانی نشده (نظرسنجی، استیکر و...) و نادیده گرفته شد.")
+            
     except Exception as e:
         print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
         stats["errors"] = stats.get("errors", 0) + 1
@@ -194,7 +229,7 @@ def main():
     app.add_handler(MessageHandler(filters.COMMAND & (~admin_filter), unauthorized_user_handler))
     
     print("==================================================")
-    print("ربات فورواردر چندکاناله آنلاین شد...")
+    print("ربات فورواردر (نسخه کامل نهایی) آنلاین شد...")
     print("==================================================")
     app.run_webhook(
         listen="0.0.0.0",
