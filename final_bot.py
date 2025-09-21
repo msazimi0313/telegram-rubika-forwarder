@@ -1,9 +1,14 @@
 import asyncio
 import os
 import json
+from datetime import datetime
+import pytz
+import jdatetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from rubpy import BotClient
+from flask import Flask
+from threading import Thread
 
 # ===============================================================
 # بخش تنظیمات
@@ -14,19 +19,31 @@ try:
     SESSION_STRING = os.environ.get("TELEGRAM_SESSION_STRING")
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
+    ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
+    TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
 except (TypeError, ValueError):
     print("خطا: یکی از متغیرهای محیطی ضروری تنظیم نشده است.")
     exit()
 
+PORT = int(os.environ.get("PORT", 10000))
+
 # ===============================================================
-# بخش اصلی کد
+# بخش وب سرور Flask (برای بیدار نگه داشتن ربات)
+# ===============================================================
+app = Flask(__name__)
+
+@app.route('/')
+def hello_world():
+    return "ربات فورواردر فعال است."
+
+# ===============================================================
+# بخش اصلی کد ربات
 # ===============================================================
 
 telegram_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
-
 routing_map = {}
-message_map = {} # ساختار: {telegram_message_id: rubika_message_id}
+message_map = {}
 
 def load_data_from_file(filename, default_data):
     try:
@@ -95,7 +112,7 @@ async def handle_deleted_message(event):
             except Exception as e:
                 print(f"!! یک خطا در هنگام حذف پیام در روبیکا رخ داد: {e}")
 
-async def main():
+async def run_telethon_client():
     global message_map, routing_map
     
     try:
@@ -116,10 +133,18 @@ async def main():
     await rubika_bot.start()
     
     print("ربات فورواردر (نسخه Telethon) آنلاین شد. منتظر پیام...")
-    # The client is already started outside, so we just run until disconnected
     await telegram_client.run_until_disconnected()
 
+# --- بخش نهایی: اجرای همزمان وب سرور و ربات ---
+def run_flask_app():
+    app.run(host='0.0.0.0', port=PORT)
+
 if __name__ == '__main__':
-    # Start the client and then run the main function in its loop
+    # اجرای وب سرور در یک ترد جداگانه
+    flask_thread = Thread(target=run_flask_app)
+    flask_thread.start()
+    
+    print("وب سرور Flask فعال شد. در حال راه اندازی کلاینت تلگرام...")
+    # اجرای کلاینت تلگرام
     with telegram_client:
-        telegram_client.loop.run_until_complete(main())
+        telegram_client.loop.run_until_complete(run_telethon_client())
