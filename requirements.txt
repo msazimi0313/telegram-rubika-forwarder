@@ -1,6 +1,6 @@
-python-telegram-bot[webhooks]
-APScheduler==3.10.4
 rubpy
 pytz
 jdatetime
 Telethon
+Flask
+gunicorn
