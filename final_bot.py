@@ -1,9 +1,6 @@
 import asyncio
 import os
 import json
-from datetime import datetime
-import pytz
-import jdatetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from rubpy import BotClient
@@ -15,14 +12,10 @@ try:
     API_ID = int(os.environ.get("TELEGRAM_API_ID"))
     API_HASH = os.environ.get("TELEGRAM_API_HASH")
     SESSION_STRING = os.environ.get("TELEGRAM_SESSION_STRING")
-    
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
-    ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
-    TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
-    
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
 except (TypeError, ValueError):
-    print("خطا: یکی از متغیرهای محیطی تنظیم نشده است.")
+    print("خطا: یکی از متغیرهای محیطی ضروری تنظیم نشده است.")
     exit()
 
 # ===============================================================
@@ -31,8 +24,9 @@ except (TypeError, ValueError):
 
 telegram_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
+
 routing_map = {}
-message_map = {}
+message_map = {} # ساختار: {telegram_message_id: rubika_message_id}
 
 def load_data_from_file(filename, default_data):
     try:
@@ -46,7 +40,8 @@ def save_data_to_file(filename, data):
 @telegram_client.on(events.NewMessage)
 async def handle_new_message(event):
     message = event.message
-    source_id = message.chat_id
+    # Telethon chat_id is negative for channels, we need to add the -100 prefix back
+    source_id = int(f"-100{message.chat_id}")
     destination_id = routing_map.get(source_id)
 
     if not destination_id: return
@@ -54,11 +49,14 @@ async def handle_new_message(event):
     print(f"\nپیام جدید از کانال تلگرام ({source_id}) -> ارسال به روبیکا ({destination_id})")
     try:
         sent_rubika_message = None
-        if message.text:
+        caption = message.text or "" # In Telethon, caption is part of message.text for media
+
+        if message.text and not message.media:
             sent_rubika_message = await rubika_bot.send_message(destination_id, message.text)
         elif message.photo or message.video or message.document:
             print("فایل شناسایی شد. در حال دانلود...")
-            file_path = await message.download_media()
+            # Using a temporary file name
+            file_path = await message.download_media(file=f"temp_{message.id}")
             print(f"فایل در '{file_path}' دانلود شد. در حال آپلود به روبیکا...")
             
             file_type = 'Image' if message.photo else ('Video' if message.video else 'File')
@@ -66,7 +64,7 @@ async def handle_new_message(event):
             sent_rubika_message = await rubika_bot.send_file(
                 destination_id,
                 file=file_path,
-                text=message.text, # در تله تون کپشن با متن یکی است
+                text=caption,
                 type=file_type
             )
             os.remove(file_path)
@@ -86,6 +84,8 @@ async def handle_deleted_message(event):
             rubika_id = message_map.pop(msg_id)
             save_data_to_file('message_map.json', message_map)
             
+            # This logic needs improvement to find the correct destination channel
+            # For now, we assume the first channel in the map
             first_destination = next(iter(routing_map.values()))
             
             print(f"پیام حذف شده تلگرام ({msg_id}) شناسایی شد. در حال حذف پیام ({rubika_id}) در روبیکا...")
@@ -116,8 +116,10 @@ async def main():
     await rubika_bot.start()
     
     print("ربات فورواردر (نسخه Telethon) آنلاین شد. منتظر پیام...")
+    # The client is already started outside, so we just run until disconnected
     await telegram_client.run_until_disconnected()
 
 if __name__ == '__main__':
-    telegram_client.start()
-    asyncio.run(main())
+    # Start the client and then run the main function in its loop
+    with telegram_client:
+        telegram_client.loop.run_until_complete(main())
