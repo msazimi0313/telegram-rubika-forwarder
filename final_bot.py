@@ -30,7 +30,7 @@ PORT = int(os.environ.get("PORT", 10000))
 # ===============================================================
 # بخش وب سرور Flask (برای بیدار نگه داشتن ربات)
 # ===============================================================
-app = Flask(__name__)
+flask_app = Flask(__name__)
 
 @app.route('/')
 def hello_world():
@@ -137,7 +137,7 @@ async def run_telethon_client():
 
 # --- بخش نهایی: اجرای همزمان وب سرور و ربات ---
 def run_flask_app():
-    app.run(host='0.0.0.0', port=PORT)
+    flask_app.run(host='0.0.0.0', port=PORT)
 
 if __name__ == '__main__':
     # اجرای وب سرور در یک ترد جداگانه
@@ -148,3 +148,4 @@ if __name__ == '__main__':
     # اجرای کلاینت تلگرام
     with telegram_client:
         telegram_client.loop.run_until_complete(run_telethon_client())
+
