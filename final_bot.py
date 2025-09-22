@@ -108,7 +108,7 @@ async def post_shutdown(application: Application):
 # --- هندلرهای جدید با استفاده از Telethon ---
 
 async def new_message_handler(event: events.NewMessage.Event):
-    """هندلر پیام‌های جدید - پشتیبانی از فایل‌های حجیم"""
+    """هندلر پیام‌های جدید - با پشتیبانی از Markdown"""
     global stats, telegram_app, message_map
     message = event.message
     source_id = message.chat_id
@@ -119,6 +119,7 @@ async def new_message_handler(event: events.NewMessage.Event):
     print(f"پیام جدید از کانال تلگرام ({source_id}) -> ارسال به روبیکا ({destination_id})")
     
     try:
+        # message.text در تلگرام معمولا حاوی کاراکترهای مارک‌داون است
         caption = message.text or ""
         sent_rubika_message = None
         message_type = "unknown"
@@ -126,33 +127,39 @@ async def new_message_handler(event: events.NewMessage.Event):
 
         if message.text and not message.media:
             message_type = "text"
-            sent_rubika_message = await rubika_bot.send_message(destination_id, message.text)
+            # افزودن پارامتر parse_mode
+            sent_rubika_message = await rubika_bot.send_message(destination_id, message.text, parse_mode='Markdown')
         elif message.photo:
             message_type = "photo"
             file_path = await message.download_media()
-            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Image')
+            # افزودن پارامتر parse_mode
+            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Image', parse_mode='Markdown')
         elif message.video:
             message_type = "video"
             file_path = await message.download_media()
-            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Video')
+            # افزودن پارامتر parse_mode
+            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Video', parse_mode='Markdown')
         elif message.audio:
             message_type = "audio"
             caption = f"🎵 {message.audio.performer or ''} - {message.audio.title or ''}\n\n{caption}".strip()
             file_path = await message.download_media()
-            sent_rubika_message = await rubika_bot.send_music(destination_id, file=str(file_path), text=caption)
+            # افزودن پارامتر parse_mode
+            sent_rubika_message = await rubika_bot.send_music(destination_id, file=str(file_path), text=caption, parse_mode='Markdown')
         elif message.voice:
             message_type = "voice"
             file_path = await message.download_media()
+            # ویس کپشن ندارد، پس نیازی به پارامتر نیست
             sent_rubika_message = await rubika_bot.send_voice(destination_id, file=str(file_path))
         elif message.document:
             message_type = "document"
             file_path = await message.download_media()
-            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='File')
+            # افزودن پارامتر parse_mode
+            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='File', parse_mode='Markdown')
 
         if file_path: os.remove(file_path)
 
         if message_type != "unknown":
-            print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد.")
+            print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد (با فرمت Markdown).")
             if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
                 telegram_id = message.id
                 rubika_id = sent_rubika_message.message_id
@@ -175,9 +182,9 @@ async def new_message_handler(event: events.NewMessage.Event):
         for admin_id in TELEGRAM_ADMIN_IDS:
             await telegram_app.bot.send_message(chat_id=admin_id, text=error_text)
     print(f"==============================================\n")
-
+    
 async def edited_message_handler(event: events.MessageEdited.Event):
-    """هندلر ویرایش پیام"""
+    """هندلر ویرایش پیام - با پشتیبانی از Markdown"""
     edited_message = event.message
     if not (edited_message and rubika_bot): return
     print(f"\n==============================================")
@@ -189,8 +196,9 @@ async def edited_message_handler(event: events.MessageEdited.Event):
             rubika_id = mapping["rubika_id"]
             destination_id = mapping["destination_id"]
             new_content = edited_message.text or ""
-            await rubika_bot.edit_message_text(destination_id, rubika_id, new_content)
-            print(f"--> پیام ({rubika_id}) در کانال ({destination_id}) با موفقیت ویرایش شد.")
+            # افزودن پارامتر parse_mode
+            await rubika_bot.edit_message_text(destination_id, rubika_id, new_content, parse_mode='Markdown')
+            print(f"--> پیام ({rubika_id}) در کانال ({destination_id}) با موفقیت ویرایش شد (با فرمت Markdown).")
         else:
             print("--> شناسه پیام ویرایش شده در دفترچه یافت نشد.")
     except Exception as e:
@@ -306,3 +314,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
