@@ -73,24 +73,11 @@ async def post_init(application: Application):
     rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
     await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
-
-    # ===============================================================
-    # کد جدید برای اشکال‌زدایی: این قسمت را اضافه کنید
-    # ===============================================================
-    print("\n\n[=== شروع لیست متدهای موجود در آبجکت rubika_bot ===]")
-    try:
-        # فیلتر کردن متدهای داخلی پایتون (که با __ شروع می‌شوند) برای خوانایی بیشتر
-        method_list = [method for method in dir(rubika_bot) if not method.startswith('__')]
-        print(method_list)
-    except Exception as e:
-        print(f"خطا در دریافت لیست متدها: {e}")
-    print("[=== پایان لیست متدها ===]\n\n")
-    # ===============================================================
-    # پایان کد جدید
-    # ===============================================================
     
     print("در حال ساخت و فعال سازی کلاینت تلگرام (Telethon)...")
     telethon_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+    await telethon_client.start()
+    print("کلاینت تلگرام (Telethon) با موفقیت فعال شد.")
 
     # ثبت هندلرهای تلگرام (یوزر)
     telethon_client.add_event_handler(new_message_handler, events.NewMessage(chats=source_channel_ids))
@@ -104,7 +91,7 @@ async def post_init(application: Application):
     # ارسال پیام شروع به کار به ادمین‌ها
     for admin_id in TELEGRAM_ADMIN_IDS:
         try:
-            await telegram_app.bot.send_message(chat_id=admin_id, text="✅ ربات چندکاناله با موفقیت آنلاین شد. (نسخه پیشرفته)")
+            await telegram_app.bot.send_message(chat_id=admin_id, text="✅ ربات چندکاناله با موفقیت آنلاین شد. (نسخه نهایی)")
         except Exception as e:
             print(f"خطا در ارسال پیام به ادمین {admin_id}: {e}")
 
@@ -210,9 +197,8 @@ async def edited_message_handler(event: events.MessageEdited.Event):
         print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
     print(f"==============================================\n")
 
-
 async def deleted_message_handler(event: events.MessageDeleted.Event):
-    """هندلر حذف پیام (با استفاده از کتابخانه صحیح)"""
+    """هندلر حذف پیام (نسخه نهایی با متد صحیح)"""
     if not rubika_bot: return
     print(f"\n==============================================")
     print(f"یک یا چند پیام از تلگرام حذف شد.")
@@ -224,8 +210,7 @@ async def deleted_message_handler(event: events.MessageDeleted.Event):
                 map_changed = True
                 rubika_id = mapping["rubika_id"]
                 destination_id = mapping["destination_id"]
-                # این خط حالا باید به درستی کار کند چون کتابخانه صحیح نصب می‌شود
-                await rubika_bot.delete_messages(destination_id, [rubika_id])
+                await rubika_bot.delete_message(destination_id, rubika_id)
                 print(f"--> پیام متناظر ({rubika_id}) در کانال روبیکا ({destination_id}) با موفقیت حذف شد.")
             else:
                 print(f"--> شناسه پیام حذف شده ({telegram_id}) در دفترچه یافت نشد.")
@@ -236,8 +221,8 @@ async def deleted_message_handler(event: events.MessageDeleted.Event):
     except Exception as e:
         print(f"!! یک خطا در هنگام حذف پیام رخ داد: {e}")
     print(f"==============================================\n")
-    
-# --- هندلرهای پنل ادمین (بدون تغییر) ---
+
+# --- هندلرهای پنل ادمین ---
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["📊 آمار"], ["⚙️ وضعیت ربات"], ["🗑 پاک کردن آمار"]]
@@ -298,8 +283,6 @@ def main():
     
     admin_filter = filters.User(user_id=TELEGRAM_ADMIN_IDS)
     
-    # اینجا دیگر به هندلرهای پیام کانال نیازی نداریم چون Telethon آن را انجام می‌دهد
-    
     app.add_handler(CommandHandler("admin", admin_panel, filters=admin_filter))
     app.add_handler(CommandHandler("status", admin_status, filters=admin_filter))
     stats_filter = (filters.COMMAND & filters.Regex('^/stats$')) | (filters.TEXT & filters.Regex('^📊 آمار$'))
@@ -310,7 +293,7 @@ def main():
     app.add_handler(MessageHandler(filters.COMMAND & (~admin_filter), unauthorized_user_handler))
     
     print("==================================================")
-    print("ربات فورواردر (نسخه پیشرفته) آنلاین شد...")
+    print("ربات فورواردر (نسخه نهایی) آنلاین شد...")
     print("==================================================")
     
     # اجرای وب‌هوک برای ربات تلگرام (پنل ادمین)
@@ -323,6 +306,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-
