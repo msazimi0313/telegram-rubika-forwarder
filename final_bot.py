@@ -1,3 +1,4 @@
+import re
 import asyncio
 import os
 import json
@@ -66,6 +67,22 @@ def load_data_from_file(filename, default_data):
 def save_data_to_file(filename, data):
     with open(filename, 'w') as f: json.dump(data, f, indent=4)
 
+def strip_markdown(text: str) -> str:
+    """این تابع علائم مارک‌داون را از متن حذف کرده و آن را به متن ساده تبدیل می‌کند."""
+    if not text:
+        return ""
+    # حذف لینک‌ها و نگه داشتن متن لینک: [text](url) -> text
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+    # حذف بولد، ایتالیک، استرایک و اسپویلر
+    # **text** or __text__ -> text
+    # *text* or _text_ -> text
+    # ~~text~~ -> text
+    # ||text|| -> text
+    text = re.sub(r'(\*\*|__|\*|_|~~|\|\|)(.+?)\1', r'\2', text)
+    # حذف کد خطی: `text` -> text
+    text = re.sub(r'`(.+?)`', r'\1', text)
+    return text
+    
 async def post_init(application: Application):
     """این تابع پس از راه‌اندازی ربات تلگرام، کلاینت‌های روبیکا و تلگرام (یوزر) را فعال می‌کند"""
     global rubika_bot, message_map, stats, telegram_app, telethon_client
@@ -109,8 +126,8 @@ async def post_shutdown(application: Application):
 # --- هندلرهای جدید با استفاده از Telethon ---
 
 async def new_message_handler(event: events.NewMessage.Event):
-    """هندلر پیام‌های جدید - با مکانیزم قفل برای جلوگیری از Race Condition"""
-    global stats, telegram_app, message_map, message_locks
+    """هندلر پیام‌های جدید - با قابلیت حذف مارک‌داون"""
+    global stats, telegram_app, message_map
     message = event.message
     source_id = message.chat_id
     destination_id = routing_map.get(source_id)
@@ -123,27 +140,31 @@ async def new_message_handler(event: events.NewMessage.Event):
         print(f"پیام جدید از کانال تلگرام ({source_id}) -> ارسال به روبیکا ({destination_id})")
         
         try:
-            caption = message.text or ""
+            # استفاده از تابع strip_markdown برای پاک‌سازی متن و کپشن
+            plain_text = strip_markdown(message.text or "")
+            
             sent_rubika_message = None
             message_type = "unknown"
             file_path = None
 
             if message.text and not message.media:
                 message_type = "text"
-                sent_rubika_message = await rubika_bot.send_message(destination_id, message.text)
+                sent_rubika_message = await rubika_bot.send_message(destination_id, plain_text)
             elif message.photo:
                 message_type = "photo"
                 file_path = await message.download_media()
-                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Image')
+                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=plain_text, type='Image')
             elif message.video:
                 message_type = "video"
                 file_path = await message.download_media()
-                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Video')
+                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=plain_text, type='Video')
             elif message.audio:
                 message_type = "audio"
-                caption = f"🎵 {message.audio.performer or ''} - {message.audio.title or ''}\n\n{caption}".strip()
+                # ترکیب کپشن ساده با اطلاعات فایل صوتی
+                audio_info = f"🎵 {message.audio.performer or ''} - {message.audio.title or ''}\n\n".strip()
+                final_caption = audio_info + plain_text
                 file_path = await message.download_media()
-                sent_rubika_message = await rubika_bot.send_music(destination_id, file=str(file_path), text=caption)
+                sent_rubika_message = await rubika_bot.send_music(destination_id, file=str(file_path), text=final_caption)
             elif message.voice:
                 message_type = "voice"
                 file_path = await message.download_media()
@@ -151,12 +172,12 @@ async def new_message_handler(event: events.NewMessage.Event):
             elif message.document:
                 message_type = "document"
                 file_path = await message.download_media()
-                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='File')
+                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=plain_text, type='File')
 
             if file_path: os.remove(file_path)
 
             if message_type != "unknown":
-                print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد.")
+                print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد (به صورت متن ساده).")
                 if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
                     telegram_id = message.id
                     rubika_id = sent_rubika_message.message_id
@@ -183,7 +204,7 @@ async def new_message_handler(event: events.NewMessage.Event):
     message_locks.pop(message.id, None)
 
 async def edited_message_handler(event: events.MessageEdited.Event):
-    """هندلر ویرایش پیام - با مکانیزم قفل برای جلوگیری از Race Condition"""
+    """هندلر ویرایش پیام - با قابلیت حذف مارک‌داون"""
     edited_message = event.message
     if not (edited_message and rubika_bot): return
     
@@ -193,6 +214,22 @@ async def edited_message_handler(event: events.MessageEdited.Event):
             pass # منتظر می‌مانیم تا قفل آزاد شود
 
     print(f"\n==============================================")
+    print(f"یک پیام ویرایش شده از تلگرام دریافت شد.")
+    try:
+        telegram_id = str(edited_message.id)
+        mapping = message_map.get(telegram_id)
+        if mapping:
+            rubika_id = mapping["rubika_id"]
+            destination_id = mapping["destination_id"]
+            # استفاده از تابع strip_markdown برای پاک‌سازی متن ویرایش شده
+            new_content = strip_markdown(edited_message.text or "")
+            await rubika_bot.edit_message_text(destination_id, rubika_id, new_content)
+            print(f"--> پیام ({rubika_id}) در کانال ({destination_id}) با موفقیت ویرایش شد (به صورت متن ساده).")
+        else:
+            print("--> شناسه پیام ویرایش شده در دفترچه یافت نشد.") 
+    except Exception as e:
+        print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
+    print(f"==============================================\n")
     print(f"یک پیام ویرایش شده از تلگرام دریافت شد.")
     try:
         telegram_id = str(edited_message.id)
@@ -318,3 +355,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
