@@ -1,6 +1,6 @@
 rubpy
 pytz
 jdatetime
-Telethon
-Flask
-gunicorn
+python-telegram-bot
+APScheduler
+telethon
