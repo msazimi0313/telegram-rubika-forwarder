@@ -73,11 +73,24 @@ async def post_init(application: Application):
     rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
     await rubika_bot.start()
     print("کلاینت روبیکا با موفقیت فعال شد.")
+
+    # ===============================================================
+    # کد جدید برای اشکال‌زدایی: این قسمت را اضافه کنید
+    # ===============================================================
+    print("\n\n[=== شروع لیست متدهای موجود در آبجکت rubika_bot ===]")
+    try:
+        # فیلتر کردن متدهای داخلی پایتون (که با __ شروع می‌شوند) برای خوانایی بیشتر
+        method_list = [method for method in dir(rubika_bot) if not method.startswith('__')]
+        print(method_list)
+    except Exception as e:
+        print(f"خطا در دریافت لیست متدها: {e}")
+    print("[=== پایان لیست متدها ===]\n\n")
+    # ===============================================================
+    # پایان کد جدید
+    # ===============================================================
     
     print("در حال ساخت و فعال سازی کلاینت تلگرام (Telethon)...")
     telethon_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-    await telethon_client.start()
-    print("کلاینت تلگرام (Telethon) با موفقیت فعال شد.")
 
     # ثبت هندلرهای تلگرام (یوزر)
     telethon_client.add_event_handler(new_message_handler, events.NewMessage(chats=source_channel_ids))
@@ -310,5 +323,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 
