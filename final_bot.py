@@ -199,7 +199,7 @@ async def edited_message_handler(event: events.MessageEdited.Event):
 
 
 async def deleted_message_handler(event: events.MessageDeleted.Event):
-    """هندلر حذف پیام (نسخه نهایی با متد صحیح)"""
+    """هندلر حذف پیام (با استفاده از کتابخانه صحیح)"""
     if not rubika_bot: return
     print(f"\n==============================================")
     print(f"یک یا چند پیام از تلگرام حذف شد.")
@@ -211,7 +211,7 @@ async def deleted_message_handler(event: events.MessageDeleted.Event):
                 map_changed = True
                 rubika_id = mapping["rubika_id"]
                 destination_id = mapping["destination_id"]
-                # استفاده از نام متد صحیح بر اساس مستندات رسمی
+                # این خط حالا باید به درستی کار کند چون کتابخانه صحیح نصب می‌شود
                 await rubika_bot.delete_messages(destination_id, [rubika_id])
                 print(f"--> پیام متناظر ({rubika_id}) در کانال روبیکا ({destination_id}) با موفقیت حذف شد.")
             else:
@@ -223,7 +223,7 @@ async def deleted_message_handler(event: events.MessageDeleted.Event):
     except Exception as e:
         print(f"!! یک خطا در هنگام حذف پیام رخ داد: {e}")
     print(f"==============================================\n")
-
+    
 # --- هندلرهای پنل ادمین (بدون تغییر) ---
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -310,4 +310,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
