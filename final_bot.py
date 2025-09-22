@@ -210,7 +210,7 @@ async def deleted_message_handler(event: events.MessageDeleted.Event):
                 rubika_id = mapping["rubika_id"]
                 destination_id = mapping["destination_id"]
                 # کتابخانه rubpy ممکن است متد حذف پیام تکی نداشته باشد، از حذف گروهی استفاده می‌کنیم
-                await rubika_bot.delete_messages(destination_id, [rubika_id])
+                await rubika_bot.delete_message_ids(destination_id, [rubika_id])
                 print(f"--> پیام متناظر ({rubika_id}) در کانال روبیکا ({destination_id}) با موفقیت حذف شد.")
             else:
                 print(f"--> شناسه پیام حذف شده ({telegram_id}) در دفترچه یافت نشد.")
@@ -307,3 +307,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
