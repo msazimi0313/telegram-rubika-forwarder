@@ -47,6 +47,7 @@ routing_map = {}
 source_channel_ids = []
 message_map = {}
 stats = {}
+message_locks = {}  # برای مدیریت همزمانی و جلوگیری از race condition
 
 def get_default_stats():
     return {
@@ -108,78 +109,89 @@ async def post_shutdown(application: Application):
 # --- هندلرهای جدید با استفاده از Telethon ---
 
 async def new_message_handler(event: events.NewMessage.Event):
-    """هندلر پیام‌های جدید - ارسال به صورت متن ساده"""
-    global stats, telegram_app, message_map
+    """هندلر پیام‌های جدید - با مکانیزم قفل برای جلوگیری از Race Condition"""
+    global stats, telegram_app, message_map, message_locks
     message = event.message
     source_id = message.chat_id
     destination_id = routing_map.get(source_id)
     if not (message and rubika_bot and destination_id): return
     
-    print(f"\n==============================================")
-    print(f"پیام جدید از کانال تلگرام ({source_id}) -> ارسال به روبیکا ({destination_id})")
+    lock = asyncio.Lock()
+    message_locks[message.id] = lock
+    async with lock:
+        print(f"\n==============================================")
+        print(f"پیام جدید از کانال تلگرام ({source_id}) -> ارسال به روبیکا ({destination_id})")
+        
+        try:
+            caption = message.text or ""
+            sent_rubika_message = None
+            message_type = "unknown"
+            file_path = None
+
+            if message.text and not message.media:
+                message_type = "text"
+                sent_rubika_message = await rubika_bot.send_message(destination_id, message.text)
+            elif message.photo:
+                message_type = "photo"
+                file_path = await message.download_media()
+                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Image')
+            elif message.video:
+                message_type = "video"
+                file_path = await message.download_media()
+                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Video')
+            elif message.audio:
+                message_type = "audio"
+                caption = f"🎵 {message.audio.performer or ''} - {message.audio.title or ''}\n\n{caption}".strip()
+                file_path = await message.download_media()
+                sent_rubika_message = await rubika_bot.send_music(destination_id, file=str(file_path), text=caption)
+            elif message.voice:
+                message_type = "voice"
+                file_path = await message.download_media()
+                sent_rubika_message = await rubika_bot.send_voice(destination_id, file=str(file_path))
+            elif message.document:
+                message_type = "document"
+                file_path = await message.download_media()
+                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='File')
+
+            if file_path: os.remove(file_path)
+
+            if message_type != "unknown":
+                print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد.")
+                if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
+                    telegram_id = message.id
+                    rubika_id = sent_rubika_message.message_id
+                    message_map[str(telegram_id)] = {"rubika_id": rubika_id, "destination_id": destination_id}
+                    save_data_to_file('message_map.json', message_map)
+                    
+                    stats.setdefault("by_type", {}).setdefault(message_type, 0)
+                    stats["by_type"][message_type] += 1
+                    stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
+                    stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
+                    save_data_to_file('stats.json', stats)
+            else:
+                print("--> پیام از نوع پشتیبانی نشده و نادیده گرفته شد.")
+
+        except Exception as e:
+            print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
+            stats["errors"] = stats.get("errors", 0) + 1
+            save_data_to_file('stats.json', stats)
+            error_text = f"❌ خطا در فوروارد از {source_id}:\n\n`{e}`"
+            for admin_id in TELEGRAM_ADMIN_IDS:
+                await telegram_app.bot.send_message(chat_id=admin_id, text=error_text)
+        print(f"==============================================\n")
     
-    try:
-        caption = message.text or ""
-        sent_rubika_message = None
-        message_type = "unknown"
-        file_path = None
+    message_locks.pop(message.id, None)
 
-        if message.text and not message.media:
-            message_type = "text"
-            sent_rubika_message = await rubika_bot.send_message(destination_id, message.text)
-        elif message.photo:
-            message_type = "photo"
-            file_path = await message.download_media()
-            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Image')
-        elif message.video:
-            message_type = "video"
-            file_path = await message.download_media()
-            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='Video')
-        elif message.audio:
-            message_type = "audio"
-            caption = f"🎵 {message.audio.performer or ''} - {message.audio.title or ''}\n\n{caption}".strip()
-            file_path = await message.download_media()
-            sent_rubika_message = await rubika_bot.send_music(destination_id, file=str(file_path), text=caption)
-        elif message.voice:
-            message_type = "voice"
-            file_path = await message.download_media()
-            sent_rubika_message = await rubika_bot.send_voice(destination_id, file=str(file_path))
-        elif message.document:
-            message_type = "document"
-            file_path = await message.download_media()
-            sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=caption, type='File')
-
-        if file_path: os.remove(file_path)
-
-        if message_type != "unknown":
-            print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد.")
-            if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
-                telegram_id = message.id
-                rubika_id = sent_rubika_message.message_id
-                message_map[str(telegram_id)] = {"rubika_id": rubika_id, "destination_id": destination_id}
-                save_data_to_file('message_map.json', message_map)
-                
-                stats.setdefault("by_type", {}).setdefault(message_type, 0)
-                stats["by_type"][message_type] += 1
-                stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
-                stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
-                save_data_to_file('stats.json', stats)
-        else:
-            print("--> پیام از نوع پشتیبانی نشده (نظرسنجی، استیکر و...) و نادیده گرفته شد.")
-
-    except Exception as e:
-        print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
-        stats["errors"] = stats.get("errors", 0) + 1
-        save_data_to_file('stats.json', stats)
-        error_text = f"❌ خطا در فوروارد از {source_id}:\n\n`{e}`"
-        for admin_id in TELEGRAM_ADMIN_IDS:
-            await telegram_app.bot.send_message(chat_id=admin_id, text=error_text)
-    print(f"==============================================\n")
-    
 async def edited_message_handler(event: events.MessageEdited.Event):
-    """هندلر ویرایش پیام - ارسال به صورت متن ساده"""
+    """هندلر ویرایش پیام - با مکانیزم قفل برای جلوگیری از Race Condition"""
     edited_message = event.message
     if not (edited_message and rubika_bot): return
+    
+    lock = message_locks.get(edited_message.id)
+    if lock:
+        async with lock:
+            pass # منتظر می‌مانیم تا قفل آزاد شود
+
     print(f"\n==============================================")
     print(f"یک پیام ویرایش شده از تلگرام دریافت شد.")
     try:
@@ -192,7 +204,7 @@ async def edited_message_handler(event: events.MessageEdited.Event):
             await rubika_bot.edit_message_text(destination_id, rubika_id, new_content)
             print(f"--> پیام ({rubika_id}) در کانال ({destination_id}) با موفقیت ویرایش شد.")
         else:
-            print("--> شناسه پیام ویرایش شده در دفترچه یافت نشد.")
+            print("--> شناسه پیام ویرایش شده در دفترچه یافت نشد.") 
     except Exception as e:
         print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
     print(f"==============================================\n")
@@ -306,5 +318,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
