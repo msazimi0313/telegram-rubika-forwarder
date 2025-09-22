@@ -1,7 +1,8 @@
-git+https://github.com/shayan-sh-1999/rubpy.git
+rubpy @ git+https://github.com/shayan-sh-1999/rubpy.git
 pytz
 jdatetime
 python-telegram-bot[webhooks]
 APScheduler
 telethon
+
 
