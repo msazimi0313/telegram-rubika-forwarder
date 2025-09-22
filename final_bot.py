@@ -115,6 +115,10 @@ async def new_message_handler(event: events.NewMessage.Event):
     lock = asyncio.Lock()
     message_locks[message.id] = lock
     async with lock:
+        # لاگ شروع فرآیند
+        print(f"\n==============================================")
+        print(f"پیام جدید از کانال تلگرام ({source_id}) -> ارسال به روبیکا ({destination_id})")
+        
         try:
             plain_text = strip_markdown(message.text or "")
             
@@ -150,23 +154,31 @@ async def new_message_handler(event: events.NewMessage.Event):
 
             if file_path: os.remove(file_path)
 
-            if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
-                message_map[str(message.id)] = {"rubika_id": sent_rubika_message.message_id, "destination_id": destination_id}
-                save_data_to_file('message_map.json', message_map)
-                
-                stats.setdefault("by_type", {}).setdefault(message_type, 0)
-                stats["by_type"][message_type] += 1
-                stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
-                stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
-                save_data_to_file('stats.json', stats)
+            if message_type != "unknown":
+                # لاگ موفقیت
+                print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد.")
+                if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
+                    message_map[str(message.id)] = {"rubika_id": sent_rubika_message.message_id, "destination_id": destination_id}
+                    save_data_to_file('message_map.json', message_map)
+                    
+                    stats.setdefault("by_type", {}).setdefault(message_type, 0)
+                    stats["by_type"][message_type] += 1
+                    stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
+                    stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
+                    save_data_to_file('stats.json', stats)
+            else:
+                print("--> پیام از نوع پشتیبانی نشده و نادیده گرفته شد.")
 
         except Exception as e:
             print(f"!! خطا در فوروارد کردن: {e}")
             stats["errors"] = stats.get("errors", 0) + 1
             save_data_to_file('stats.json', stats)
+        
+        # لاگ پایان فرآیند
+        print(f"==============================================\n")
     
     message_locks.pop(message.id, None)
-
+    
 async def edited_message_handler(event: events.MessageEdited.Event):
     edited_message = event.message
     if not (edited_message and rubika_bot): return
@@ -176,16 +188,33 @@ async def edited_message_handler(event: events.MessageEdited.Event):
         async with lock:
             pass
 
+    # لاگ شروع فرآیند
+    print(f"\n==============================================")
+    print(f"یک پیام ویرایش شده از تلگرام دریافت شد.")
+
     try:
         mapping = message_map.get(str(edited_message.id))
         if mapping:
             new_content = strip_markdown(edited_message.text or "")
             await rubika_bot.edit_message_text(mapping["destination_id"], mapping["rubika_id"], new_content)
+            # لاگ موفقیت
+            print(f"--> پیام ({mapping['rubika_id']}) در کانال ({mapping['destination_id']}) با موفقیت ویرایش شد.")
+        else:
+            print("--> شناسه پیام ویرایش شده در دفترچه یافت نشد.")
+            
     except Exception as e:
         print(f"!! خطا در ویرایش پیام: {e}")
 
+    # لاگ پایان فرآیند
+    print(f"==============================================\n")
+
 async def deleted_message_handler(event: events.MessageDeleted.Event):
     if not rubika_bot: return
+
+    # لاگ شروع فرآیند
+    print(f"\n==============================================")
+    print(f"یک یا چند پیام از تلگرام حذف شد.")
+
     try:
         map_changed = False
         for telegram_id in event.deleted_ids:
@@ -193,6 +222,10 @@ async def deleted_message_handler(event: events.MessageDeleted.Event):
             if mapping:
                 map_changed = True
                 await rubika_bot.delete_message(mapping["destination_id"], mapping["rubika_id"])
+                # لاگ موفقیت
+                print(f"--> پیام متناظر ({mapping['rubika_id']}) در کانال روبیکا ({mapping['destination_id']}) با موفقیت حذف شد.")
+            else:
+                print(f"--> شناسه پیام حذف شده ({telegram_id}) در دفترچه یافت نشد.")
         
         if map_changed:
             save_data_to_file('message_map.json', message_map)
@@ -200,6 +233,9 @@ async def deleted_message_handler(event: events.MessageDeleted.Event):
     except Exception as e:
         print(f"!! خطا در حذف پیام: {e}")
 
+    # لاگ پایان فرآیند
+    print(f"==============================================\n")
+    
 # --- هندلرهای پنل ادمین ---
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -272,3 +308,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
