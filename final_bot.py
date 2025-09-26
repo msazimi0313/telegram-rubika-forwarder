@@ -206,6 +206,8 @@ async def deleted_message_handler(event):
 # ===============================================================
 
 async def admin_command_handler(event):
+    global stats  # <---【تغییر اصلی】 این خط به اینجا منتقل شد
+    
     command = event.raw_text.lower()
     user_id = event.sender_id
     
@@ -247,7 +249,7 @@ async def admin_command_handler(event):
         await event.respond(status_text, parse_mode='markdown')
 
     elif command == "/clearstats" or "پاک کردن آمار" in command:
-        global stats
+        # 'global stats' از اینجا حذف شد چون به بالای تابع منتقل شده
         stats = get_default_stats()
         save_data_to_file('stats.json', stats)
         await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
@@ -346,3 +348,4 @@ if __name__ == '__main__':
             bot_client.disconnect()
         if rubika_bot:
             loop.run_until_complete(rubika_bot.close())
+
