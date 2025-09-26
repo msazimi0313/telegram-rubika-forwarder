@@ -1,60 +1,48 @@
 import asyncio
 import os
 import json
-import re  # <<< این خط برای کار با متن لازم است
 from datetime import datetime
 import pytz
 import jdatetime
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler
-from rubpy import BotClient
 from telethon import TelegramClient, events
-from telethon.sessions import StringSession
+from rubpy import BotClient
 
 # ===============================================================
 # بخش تنظیمات
 # ===============================================================
 try:
+    # --- متغیرهای جدید برای Telethon ---
+    API_ID = int(os.environ.get("TELEGRAM_API_ID"))
+    API_HASH = os.environ.get("TELEGRAM_API_HASH")
+    SESSION_STRING = os.environ.get("TELEGRAM_SESSION_STRING")
+
+    # --- متغیرهای قبلی ---
     TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
     RUBIKA_BOT_TOKEN = os.environ.get("RUBIKA_BOT_TOKEN")
-    WEBHOOK_URL = os.environ.get("WEBHOOK_URL")
-    API_ID = int(os.environ.get("API_ID"))
-    API_HASH = os.environ.get("API_HASH")
-    SESSION_STRING = os.environ.get("SESSION_STRING")
+    
 except (TypeError, ValueError) as e:
-    print(f"خطا: یکی از متغیرهای محیطی ضروری تنظیم نشده یا فرمت آن اشتباه است. {e}")
+    print(f"خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است: {e}")
     exit()
 
-PORT = int(os.environ.get("PORT", 10000))
 IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
 
 # ===============================================================
 # بخش اصلی کد
 # ===============================================================
 
+# --- کلاینت‌ها ---
+user_client: TelegramClient | None = None # کلاینت اصلی برای خواندن کانال‌ها
+bot_client: TelegramClient | None = None  # کلاینت ربات برای پنل ادمین
 rubika_bot: BotClient | None = None
-telegram_app: Application | None = None
-telethon_client: TelegramClient | None = None
 
+# --- دیکشنری‌ها و آمار ---
 routing_map = {}
 source_channel_ids = []
 message_map = {}
 stats = {}
-message_locks = {}
-
-# --- توابع کمکی ---
-
-def strip_markdown(text: str) -> str:
-    """این تابع علائم مارک‌داون را از متن حذف کرده و آن را به متن ساده تبدیل می‌کند."""
-    if not text:
-        return ""
-    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)  # حذف لینک
-    text = re.sub(r'(\*\*|__|\*|_|~~|\|\|)(.+?)\1', r'\2', text)  # حذف بولد، ایتالیک و...
-    text = re.sub(r'`(.+?)`', r'\1', text)  # حذف کد
-    return text
 
 def get_default_stats():
     return {
@@ -73,239 +61,288 @@ def load_data_from_file(filename, default_data):
 def save_data_to_file(filename, data):
     with open(filename, 'w') as f: json.dump(data, f, indent=4)
 
-async def post_init(application: Application):
-    global rubika_bot, message_map, stats, telegram_app, telethon_client
-    telegram_app = application
-    print("در حال ساخت و فعال سازی کلاینت روبیکا...")
-    rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
-    await rubika_bot.start()
-    print("کلاینت روبیکا با موفقیت فعال شد.")
-    
-    print("در حال ساخت و فعال سازی کلاینت تلگرام (Telethon)...")
-    telethon_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-    await telethon_client.start()
-    print("کلاینت تلگرام (Telethon) با موفقیت فعال شد.")
+async def send_admin_notification(text):
+    if bot_client:
+        for admin_id in TELEGRAM_ADMIN_IDS:
+            try:
+                await bot_client.send_message(admin_id, text, parse_mode='markdown')
+            except Exception as e:
+                print(f"خطا در ارسال پیام به ادمین {admin_id}: {e}")
 
-    telethon_client.add_event_handler(new_message_handler, events.NewMessage(chats=source_channel_ids))
-    telethon_client.add_event_handler(edited_message_handler, events.MessageEdited(chats=source_channel_ids))
-    telethon_client.add_event_handler(deleted_message_handler, events.MessageDeleted(chats=source_channel_ids))
+# ===============================================================
+# هندلرهای رویدادهای تلگرام (با Telethon)
+# ===============================================================
 
-    message_map = load_data_from_file('message_map.json', {})
-    stats = load_data_from_file('stats.json', get_default_stats())
-
-    for admin_id in TELEGRAM_ADMIN_IDS:
-        try:
-            await telegram_app.bot.send_message(chat_id=admin_id, text="✅ ربات با موفقیت آنلاین شد.")
-        except Exception as e:
-            print(f"خطا در ارسال پیام به ادمین {admin_id}: {e}")
-
-async def post_shutdown(application: Application):
-    if rubika_bot: await rubika_bot.close()
-    if telethon_client: await telethon_client.disconnect()
-
-# --- هندلرهای Telethon ---
-
-async def new_message_handler(event: events.NewMessage.Event):
-    global stats, telegram_app, message_map, message_locks
+async def new_message_handler(event):
+    global stats, message_map
     message = event.message
+    if not rubika_bot: return
+
     source_id = message.chat_id
     destination_id = routing_map.get(source_id)
-    if not (message and rubika_bot and destination_id): return
+    if not destination_id: return
+
+    print(f"\n==============================================")
+    print(f"پیام جدید از کانال تلگرام ({source_id}) -> ارسال به روبیکا ({destination_id})")
     
-    lock = asyncio.Lock()
-    message_locks[message.id] = lock
-    async with lock:
-        # لاگ شروع فرآیند
-        print(f"\n==============================================")
-        print(f"پیام جدید از کانال تلگرام ({source_id}) -> ارسال به روبیکا ({destination_id})")
+    try:
+        caption = message.text or ""
+        sent_rubika_message = None
+        message_type = "unknown"
+        file_path = None
+
+        if message.text and not message.media:
+            message_type = "text"
+            sent_rubika_message = await rubika_bot.send_message(destination_id, message.text)
         
-        try:
-            plain_text = strip_markdown(message.text or "")
+        elif message.photo:
+            message_type = "photo"
+            print("--> در حال دانلود عکس...")
+            file_path = await user_client.download_media(message.photo, file="downloads/")
+            sent_rubika_message = await rubika_bot.send_file(destination_id, file=file_path, text=caption, type='Image')
+        
+        elif message.video:
+            message_type = "video"
+            file_size_mb = message.video.size / 1024 / 1024
+            print(f"--> در حال دانلود ویدیو ({file_size_mb:.2f} MB)...")
+            file_path = await user_client.download_media(message.video, file="downloads/")
+            sent_rubika_message = await rubika_bot.send_file(destination_id, file=file_path, text=caption, type='Video')
+
+        elif message.audio:
+            message_type = "audio"
+            file_size_mb = message.audio.size / 1024 / 1024
+            print(f"--> در حال دانلود موزیک ({file_size_mb:.2f} MB)...")
+            caption = f"🎵 {message.audio.attributes[0].performer or ''} - {message.audio.attributes[0].title or ''}\n\n{caption}".strip()
+            file_path = await user_client.download_media(message.audio, file="downloads/")
+            sent_rubika_message = await rubika_bot.send_music(destination_id, file=file_path, text=caption)
+
+        elif message.voice:
+            message_type = "voice"
+            print("--> در حال دانلود ویس...")
+            file_path = await user_client.download_media(message.voice, file="downloads/")
+            sent_rubika_message = await rubika_bot.send_voice(destination_id, file=file_path)
+
+        elif message.document:
+            message_type = "document"
+            file_size_mb = message.document.size / 1024 / 1024
+            print(f"--> در حال دانلود فایل ({file_size_mb:.2f} MB)...")
+            file_path = await user_client.download_media(message.document, file="downloads/")
+            sent_rubika_message = await rubika_bot.send_file(destination_id, file=file_path, text=caption, type='File')
+
+        if file_path and os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"--> فایل موقت ({file_path}) حذف شد.")
             
-            sent_rubika_message = None
-            message_type = "unknown"
-            file_path = None
+        if message_type != "unknown":
+            print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد.")
+            if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
+                telegram_id = message.id
+                rubika_id = sent_rubika_message.message_id
+                message_map[str(telegram_id)] = {"rubika_id": rubika_id, "destination_id": destination_id, "chat_id": source_id}
+                save_data_to_file('message_map.json', message_map)
+                
+                stats["by_type"].setdefault(message_type, 0)
+                stats["by_type"][message_type] += 1
+                stats["total_forwarded"] += 1
+                stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
+                save_data_to_file('stats.json', stats)
+        else:
+            print("--> پیام از نوع پشتیبانی نشده (نظرسنجی، استیکر و...) و نادیده گرفته شد.")
 
-            if message.text and not message.media:
-                message_type = "text"
-                sent_rubika_message = await rubika_bot.send_message(destination_id, plain_text)
-            elif message.photo:
-                message_type = "photo"
-                file_path = await message.download_media()
-                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=plain_text, type='Image')
-            elif message.video:
-                message_type = "video"
-                file_path = await message.download_media()
-                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=plain_text, type='Video')
-            elif message.audio:
-                message_type = "audio"
-                audio_info = f"🎵 {message.audio.performer or ''} - {message.audio.title or ''}\n\n".strip()
-                final_caption = audio_info + plain_text
-                file_path = await message.download_media()
-                sent_rubika_message = await rubika_bot.send_music(destination_id, file=str(file_path), text=final_caption)
-            elif message.voice:
-                message_type = "voice"
-                file_path = await message.download_media()
-                sent_rubika_message = await rubika_bot.send_voice(destination_id, file=str(file_path))
-            elif message.document:
-                message_type = "document"
-                file_path = await message.download_media()
-                sent_rubika_message = await rubika_bot.send_file(destination_id, file=str(file_path), text=plain_text, type='File')
-
-            if file_path: os.remove(file_path)
-
-            if message_type != "unknown":
-                # لاگ موفقیت
-                print(f"--> پیام از نوع '{message_type}' با موفقیت به روبیکا ارسال شد.")
-                if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
-                    message_map[str(message.id)] = {"rubika_id": sent_rubika_message.message_id, "destination_id": destination_id}
-                    save_data_to_file('message_map.json', message_map)
-                    
-                    stats.setdefault("by_type", {}).setdefault(message_type, 0)
-                    stats["by_type"][message_type] += 1
-                    stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
-                    stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
-                    save_data_to_file('stats.json', stats)
-            else:
-                print("--> پیام از نوع پشتیبانی نشده و نادیده گرفته شد.")
-
-        except Exception as e:
-            print(f"!! خطا در فوروارد کردن: {e}")
-            stats["errors"] = stats.get("errors", 0) + 1
-            save_data_to_file('stats.json', stats)
-        
-        # لاگ پایان فرآیند
-        print(f"==============================================\n")
+    except Exception as e:
+        print(f"!! یک خطا در هنگام فوروارد کردن پیام رخ داد: {e}")
+        stats["errors"] = stats.get("errors", 0) + 1
+        save_data_to_file('stats.json', stats)
+        error_text = f"❌ خطا در فوروارد از `{source_id}`:\n\n`{e}`"
+        await send_admin_notification(error_text)
     
-    message_locks.pop(message.id, None)
-    
-async def edited_message_handler(event: events.MessageEdited.Event):
+    print(f"==============================================\n")
+
+async def edited_message_handler(event):
     edited_message = event.message
     if not (edited_message and rubika_bot): return
     
-    lock = message_locks.get(edited_message.id)
-    if lock:
-        async with lock:
-            pass
-
-    # لاگ شروع فرآیند
     print(f"\n==============================================")
     print(f"یک پیام ویرایش شده از تلگرام دریافت شد.")
-
     try:
-        mapping = message_map.get(str(edited_message.id))
+        telegram_id = str(edited_message.id)
+        mapping = message_map.get(telegram_id)
         if mapping:
-            new_content = strip_markdown(edited_message.text or "")
-            await rubika_bot.edit_message_text(mapping["destination_id"], mapping["rubika_id"], new_content)
-            # لاگ موفقیت
-            print(f"--> پیام ({mapping['rubika_id']}) در کانال ({mapping['destination_id']}) با موفقیت ویرایش شد.")
+            rubika_id = mapping["rubika_id"]
+            destination_id = mapping["destination_id"]
+            new_content = edited_message.text or ""
+            await rubika_bot.edit_message_text(destination_id, rubika_id, new_content)
+            print(f"--> پیام ({rubika_id}) در کانال ({destination_id}) با موفقیت ویرایش شد.")
         else:
             print("--> شناسه پیام ویرایش شده در دفترچه یافت نشد.")
-            
     except Exception as e:
-        print(f"!! خطا در ویرایش پیام: {e}")
-
-    # لاگ پایان فرآیند
+        print(f"!! یک خطا در هنگام ویرایش پیام رخ داد: {e}")
     print(f"==============================================\n")
 
-async def deleted_message_handler(event: events.MessageDeleted.Event):
+async def deleted_message_handler(event):
     if not rubika_bot: return
 
-    # لاگ شروع فرآیند
     print(f"\n==============================================")
-    print(f"یک یا چند پیام از تلگرام حذف شد.")
-
+    print(f"{len(event.deleted_ids)} پیام حذف شده از تلگرام دریافت شد.")
     try:
-        map_changed = False
-        for telegram_id in event.deleted_ids:
-            mapping = message_map.pop(str(telegram_id), None)
+        for deleted_id in event.deleted_ids:
+            telegram_id = str(deleted_id)
+            mapping = message_map.get(telegram_id)
             if mapping:
-                map_changed = True
-                await rubika_bot.delete_message(mapping["destination_id"], mapping["rubika_id"])
-                # لاگ موفقیت
-                print(f"--> پیام متناظر ({mapping['rubika_id']}) در کانال روبیکا ({mapping['destination_id']}) با موفقیت حذف شد.")
+                rubika_id = mapping["rubika_id"]
+                destination_id = mapping["destination_id"]
+                await rubika_bot.delete_messages(destination_id, [rubika_id])
+                print(f"--> پیام متناظر ({rubika_id}) در کانال روبیکا ({destination_id}) حذف شد.")
+                del message_map[telegram_id] # از مپ هم حذف میکنیم
             else:
-                print(f"--> شناسه پیام حذف شده ({telegram_id}) در دفترچه یافت نشد.")
-        
-        if map_changed:
-            save_data_to_file('message_map.json', message_map)
-            
+                print(f"--> پیام حذف شده با شناسه {telegram_id} در دفترچه یافت نشد.")
+        save_data_to_file('message_map.json', message_map)
     except Exception as e:
-        print(f"!! خطا در حذف پیام: {e}")
-
-    # لاگ پایان فرآیند
+        print(f"!! یک خطا در هنگام حذف پیام رخ داد: {e}")
     print(f"==============================================\n")
+
+# ===============================================================
+# هندلرهای دستورات ادمین (از طریق ربات تلگرام)
+# ===============================================================
+
+async def admin_command_handler(event):
+    command = event.raw_text.lower()
+    user_id = event.sender_id
     
-# --- هندلرهای پنل ادمین ---
+    if user_id not in TELEGRAM_ADMIN_IDS:
+        user = await event.get_sender()
+        await event.respond(f" سلام {user.first_name} عزیز! 🌸\n\nمتاسفانه شما اجازه استفاده از این دستورات را ندارید.")
+        return
 
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["📊 آمار"], ["⚙️ وضعیت ربات"], ["🗑 پاک کردن آمار"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
-    await update.message.reply_text("پنل مدیریت:", reply_markup=reply_markup)
+    if command == "/start" or command == "/admin":
+        await event.respond("پنل مدیریت:", buttons=[
+            ["📊 آمار (/stats)"], 
+            ["⚙️ وضعیت ربات (/status)"], 
+            ["🗑 پاک کردن آمار (/clearstats)"]
+        ])
+    
+    elif command == "/stats" or "آمار" in command:
+        last_time_str = "هنوز فعالیتی ثبت نشده"
+        if stats.get("last_activity_time"):
+            last_time_iso = datetime.fromisoformat(stats['last_activity_time'])
+            jalali_time = jdatetime.datetime.fromgregorian(datetime=last_time_iso)
+            last_time_str = jalali_time.strftime('%Y/%m/%d - %H:%M:%S')
 
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    stats_text = f"📊 **آمار ربات**\n\n"
-    stats_text += f"کل پیام‌های فوروارد شده: **{stats.get('total_forwarded', 0)}**\n"
-    stats_text += f"تعداد خطاها: **{stats.get('errors', 0)}**\n"
-    await update.message.reply_text(stats_text, parse_mode='Markdown')
+        stats_text = (
+            f"📊 **آمار عملکرد ربات فورواردر**\n\n"
+            f"🔹 **کل پیام‌های فوروارد شده:** {stats.get('total_forwarded', 0)}\n"
+            f"🔸 **آخرین فعالیت:** {last_time_str}\n"
+            f"🔺 **تعداد خطاها:** {stats.get('errors', 0)}\n\n"
+            f"📦 **تفکیک نوع پیام:**\n"
+        )
+        for msg_type, count in stats.get("by_type", {}).items():
+            stats_text += f"  - `{msg_type}`: {count}\n"
+        await event.respond(stats_text, parse_mode='markdown')
 
-async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_text = "✅ ربات فعال است.\n\n"
-    status_text += "**— مسیردهی‌ها —**\n"
-    for tg_id, rb_id in routing_map.items():
-        status_text += f"`{tg_id}` ➡️ `{rb_id}`\n"
-    await update.message.reply_text(status_text, parse_mode='Markdown')
+    elif command == "/status" or "وضعیت" in command:
+        status_text = "✅ ربات فعال و در حال کار است.\n\n"
+        status_text += "**— نقشه مسیردهی فعال —**\n"
+        for tg_id, rb_id in routing_map.items():
+            status_text += f"`{tg_id}` ➡️ `{rb_id}`\n"
+        await event.respond(status_text, parse_mode='markdown')
 
-async def admin_clear_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global stats
-    stats = get_default_stats()
-    save_data_to_file('stats.json', stats)
-    await update.message.reply_text("🗑 آمار پاک شد.")
+    elif command == "/clearstats" or "پاک کردن آمار" in command:
+        global stats
+        stats = get_default_stats()
+        save_data_to_file('stats.json', stats)
+        await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
-async def unauthorized_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⛔ شما اجازه استفاده از این دستورات را ندارید.")
+# ===============================================================
+# تابع اصلی و اجرای برنامه
+# ===============================================================
 
-def main():
-    global routing_map, source_channel_ids
+async def main():
+    global routing_map, source_channel_ids, message_map, stats
+    global user_client, bot_client, rubika_bot
+    
+    # --- بارگذاری نقشه کانال‌ها ---
     try:
         pairs = CHANNEL_MAP_STR.split(',')
         for pair in pairs:
             if ':' in pair:
                 tg_id, rb_id = pair.split(':', 1)
-                routing_map[int(tg_id.strip())] = rb_id.strip()
+                # در Telethon، آیدی کانال‌ها باید به فرمت صحیح باشند
+                tg_id_int = int(tg_id.strip())
+                if not tg_id.strip().startswith("-100"):
+                    tg_id_int = int("-100" + tg_id.strip())
+                routing_map[tg_id_int] = rb_id.strip()
         source_channel_ids = list(routing_map.keys())
         if not source_channel_ids: raise ValueError("نقشه کانال ها خالی است.")
+        print("نقشه مسیردهی با موفقیت بارگذاری شد:", routing_map)
     except Exception as e:
-        print(f"خطا در پردازش CHANNEL_MAP: {e}")
+        print(f"خطا در پردازش متغیر محیطی CHANNEL_MAP: {e}")
         return
 
-    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).post_shutdown(post_shutdown).build()
+    # --- بارگذاری داده‌های ذخیره شده ---
+    message_map = load_data_from_file('message_map.json', {})
+    stats = load_data_from_file('stats.json', get_default_stats())
     
-    admin_filter = filters.User(user_id=TELEGRAM_ADMIN_IDS)
+    # --- ساخت پوشه دانلودها ---
+    if not os.path.exists("downloads"):
+        os.makedirs("downloads")
+
+    # --- اتصال کلاینت‌ها ---
+    print("در حال اتصال کلاینت کاربری تلگرام (User Client)...")
+    user_client = TelegramClient(None, API_ID, API_HASH) # استفاده از None برای session_name وقتی session_string داریم
+    await user_client.connect()
+    is_authorized = await user_client.is_user_authorized()
+    if not is_authorized:
+        await user_client.send_code_request(user_client.session.phone)
+        await user_client.sign_in(user_client.session.phone, input('Enter code: '))
+        print("Session string:", user_client.session.save())
+        
+    print("کلاینت کاربری با موفقیت متصل شد.")
+
+    print("در حال اتصال کلاینت ربات تلگرام (Bot Client)...")
+    bot_client = await TelegramClient('bot', API_ID, API_HASH).start(bot_token=TELEGRAM_BOT_TOKEN)
+    print("کلاینت ربات با موفقیت متصل شد.")
     
-    app.add_handler(CommandHandler("admin", admin_panel, filters=admin_filter))
-    app.add_handler(CommandHandler("status", admin_status, filters=admin_filter))
+    print("در حال ساخت و فعال سازی کلاینت روبیکا...")
+    rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
+    await rubika_bot.start()
+    print("کلاینت روبیکا با موفقیت فعال شد.")
 
-    # --- بخش اصلاح شده ---
-    # فیلتر آمار را با فیلتر ادمین ترکیب می‌کنیم
-    stats_combined_filter = ((filters.COMMAND & filters.Regex('^/stats$')) | (filters.TEXT & filters.Regex('^📊 آمار$'))) & admin_filter
-    app.add_handler(MessageHandler(stats_combined_filter, admin_stats))
-
-    # فیلتر پاک کردن آمار را با فیلتر ادمین ترکیب می‌کنیم
-    clear_stats_combined_filter = ((filters.COMMAND & filters.Regex('^/clearstats$')) | (filters.TEXT & filters.Regex('^🗑 پاک کردن آمار$'))) & admin_filter
-    app.add_handler(MessageHandler(clear_stats_combined_filter, admin_clear_stats))
-    # --- پایان بخش اصلاح شده ---
-
-    app.add_handler(MessageHandler(filters.COMMAND & (~admin_filter), unauthorized_user_handler))
+    # --- ثبت هندلرها ---
+    user_client.add_event_handler(new_message_handler, events.NewMessage(chats=source_channel_ids, incoming=True))
+    user_client.add_event_handler(edited_message_handler, events.MessageEdited(chats=source_channel_ids, incoming=True))
+    user_client.add_event_handler(deleted_message_handler, events.MessageDeleted(chats=source_channel_ids))
+    bot_client.add_event_handler(admin_command_handler, events.NewMessage(incoming=True))
     
-    print("ربات آنلاین شد...")
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TELEGRAM_BOT_TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{TELEGRAM_BOT_TOKEN}"
+    print("\n==================================================")
+    print("ربات فورواردر (نسخه Telethon) آنلاین شد...")
+    print("==================================================")
+    
+    await send_admin_notification("✅ ربات چندکاناله (نسخه Telethon) با موفقیت آنلاین شد.")
+    
+    # --- اجرای همزمان ---
+    await asyncio.gather(
+        user_client.run_until_disconnected(),
+        bot_client.run_until_disconnected()
     )
 
-if __name__ == '__main__':
-    main()
 
+if __name__ == '__main__':
+    # این بخش برای اجرای مستقیم با session string است
+    # This part handles running with the session string
+    loop = asyncio.get_event_loop()
+    user_client = TelegramClient(None, API_ID, API_HASH, loop=loop)
+    user_client.session.set_dc(2, '149.154.167.51', 80)
+    if SESSION_STRING:
+       user_client.session.set_auth_key(telethon.sessions.StringSession(SESSION_STRING).get_auth_key())
+
+    try:
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if user_client.is_connected():
+            user_client.disconnect()
+        if bot_client and bot_client.is_connected():
+            bot_client.disconnect()
+        if rubika_bot:
+            loop.run_until_complete(rubika_bot.close())
