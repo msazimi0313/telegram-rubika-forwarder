@@ -5,6 +5,7 @@ from datetime import datetime
 import pytz
 import jdatetime
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from rubpy import BotClient
 
 # ===============================================================
@@ -268,10 +269,7 @@ async def main():
         for pair in pairs:
             if ':' in pair:
                 tg_id, rb_id = pair.split(':', 1)
-                # در Telethon، آیدی کانال‌ها باید به فرمت صحیح باشند
                 tg_id_int = int(tg_id.strip())
-                if not tg_id.strip().startswith("-100"):
-                    tg_id_int = int("-100" + tg_id.strip())
                 routing_map[tg_id_int] = rb_id.strip()
         source_channel_ids = list(routing_map.keys())
         if not source_channel_ids: raise ValueError("نقشه کانال ها خالی است.")
@@ -290,19 +288,11 @@ async def main():
 
     # --- اتصال کلاینت‌ها ---
     print("در حال اتصال کلاینت کاربری تلگرام (User Client)...")
-    user_client = TelegramClient(None, API_ID, API_HASH) # استفاده از None برای session_name وقتی session_string داریم
-    await user_client.connect()
-    is_authorized = await user_client.is_user_authorized()
-    if not is_authorized:
-        await user_client.send_code_request(user_client.session.phone)
-        await user_client.sign_in(user_client.session.phone, input('Enter code: '))
-        print("Session string:", user_client.session.save())
-        
-    print("کلاینت کاربری با موفقیت متصل شد.")
-
+    # <---【تغییر اصلی】: استفاده مستقیم از StringSession در اینجا
+    user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+    
     print("در حال اتصال کلاینت ربات تلگرام (Bot Client)...")
-    bot_client = await TelegramClient('bot', API_ID, API_HASH).start(bot_token=TELEGRAM_BOT_TOKEN)
-    print("کلاینت ربات با موفقیت متصل شد.")
+    bot_client = TelegramClient('bot_session', API_ID, API_HASH)
     
     print("در حال ساخت و فعال سازی کلاینت روبیکا...")
     rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
@@ -313,15 +303,22 @@ async def main():
     user_client.add_event_handler(new_message_handler, events.NewMessage(chats=source_channel_ids, incoming=True))
     user_client.add_event_handler(edited_message_handler, events.MessageEdited(chats=source_channel_ids, incoming=True))
     user_client.add_event_handler(deleted_message_handler, events.MessageDeleted(chats=source_channel_ids))
-    bot_client.add_event_handler(admin_command_handler, events.NewMessage(incoming=True))
+    bot_client.add_event_handler(admin_command_handler, events.NewMessage(from_users=TELEGRAM_ADMIN_IDS, incoming=True))
     
     print("\n==================================================")
-    print("ربات فورواردر (نسخه Telethon) آنلاین شد...")
+    print("ربات فورواردر (نسخه Telethon) در حال آنلاین شدن...")
     print("==================================================")
+    
+    # --- اجرای کلاینت‌ها ---
+    await user_client.start()
+    print("کلاینت کاربری با موفقیت متصل و آنلاین شد.")
+    
+    await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
+    print("کلاینت ربات با موفقیت متصل و آنلاین شد.")
     
     await send_admin_notification("✅ ربات چندکاناله (نسخه Telethon) با موفقیت آنلاین شد.")
     
-    # --- اجرای همزمان ---
+    # --- اجرای همزمان و منتظر ماندن ---
     await asyncio.gather(
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
@@ -329,23 +326,7 @@ async def main():
 
 
 if __name__ == '__main__':
-    # این بخش برای اجرای مستقیم با session string است
-    # This part handles running with the session string
-    loop = asyncio.get_event_loop()
-    user_client = TelegramClient(None, API_ID, API_HASH, loop=loop)
-    user_client.session.set_dc(2, '149.154.167.51', 80)
-    if SESSION_STRING:
-       user_client.session.set_auth_key(telethon.sessions.StringSession(SESSION_STRING).get_auth_key())
-
     try:
-        loop.run_until_complete(main())
+        asyncio.run(main())
     except KeyboardInterrupt:
-        pass
-    finally:
-        if user_client.is_connected():
-            user_client.disconnect()
-        if bot_client and bot_client.is_connected():
-            bot_client.disconnect()
-        if rubika_bot:
-            loop.run_until_complete(rubika_bot.close())
-
+        print("\nربات با دستور کاربر متوقف شد.")
