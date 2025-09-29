@@ -3,3 +3,5 @@ pytz
 jdatetime
 Telethon
 APScheduler
+Flask
+nest_asyncio
