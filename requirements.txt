@@ -1,7 +1,8 @@
-rubpy
-pytz
-jdatetime
-Telethon
 APScheduler
 Flask
 gunicorn
+jdatetime
+nest_asyncio
+pytz
+rubpy
+Telethon
