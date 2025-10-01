@@ -195,7 +195,7 @@ async def deleted_message_handler(event):
             if mapping:
                 rubika_id = mapping["rubika_id"]
                 destination_id = mapping["destination_id"]
-                await rubika_bot.delete_message(destination_id, [rubika_id])
+                await rubika_bot.delete_messages(destination_id, [rubika_id])
                 print(f"--> پیام متناظر ({rubika_id}) در کانال روبیکا ({destination_id}) حذف شد.")
                 del message_map[telegram_id] # از مپ هم حذف میکنیم
             else:
@@ -333,5 +333,6 @@ if __name__ == '__main__':
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nربات با دستور کاربر متوقف شد.")
+
 
 
