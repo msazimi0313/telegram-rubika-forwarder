@@ -7,7 +7,6 @@ import jdatetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from rubpy import BotClient
-from keep_alive import keep_alive
 import nest_asyncio
 
 nest_asyncio.apply()
@@ -331,7 +330,7 @@ async def main():
 
 if __name__ == '__main__':
     try:
-        keep_alive()  # <--- این خط را اضافه کنید
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nربات با دستور کاربر متوقف شد.")
+
