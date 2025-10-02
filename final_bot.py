@@ -65,8 +65,9 @@ async def process_event(event, event_type):
         print(f"\n[پردازش پیام جدید] از {source_id} به {destination_id}")
         
         rubika_reply_to_id = None
-        if message.is_reply and message.reply_to_message_id:
-            telegram_reply_to_id = str(message.reply_to_message_id)
+        # <---【اصلاح شد】: استفاده از متد صحیح برای دریافت شناسه ریپلای
+        if message.is_reply and message.reply_to:
+            telegram_reply_to_id = str(message.reply_to.reply_to_msg_id)
             mapping = message_map.get(telegram_reply_to_id)
             if mapping:
                 rubika_reply_to_id = mapping.get("rubika_id")
@@ -142,7 +143,6 @@ async def process_event(event, event_type):
                     mapping = message_map[telegram_id]
                     rubika_id = mapping["rubika_id"]
                     destination_id = mapping["destination_id"]
-                    # <---【اصلاح شد】: استفاده از متد صحیح delete_message
                     await rubika_bot.delete_message(destination_id, rubika_id)
                     print(f"-> پیام متناظر ({rubika_id}) در روبیکا ({destination_id}) حذف شد.")
                     del message_map[telegram_id]
@@ -151,7 +151,7 @@ async def process_event(event, event_type):
             print(f"!! خطا در پردازش حذف پیام: {e}")
 
 # ===============================================================
-# <---【اضافه شد】: بازگرداندن پنل ادمین
+# پنل ادمین
 # ===============================================================
 async def admin_command_handler(event):
     global stats
@@ -196,7 +196,6 @@ async def admin_command_handler(event):
 async def main(event_queue):
     global user_client, bot_client, rubika_bot, routing_map, message_map, stats
     
-    # بارگذاری داده‌های اولیه
     pairs = CHANNEL_MAP_STR.split(',')
     for pair in pairs:
         if ':' in pair:
@@ -210,14 +209,12 @@ async def main(event_queue):
     if not os.path.exists("downloads"):
         os.makedirs("downloads")
 
-    # اتصال کلاینت‌ها
     print("در حال اتصال کلاینت‌ها...")
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
     rubika_bot = BotClient(RUBIKA_BOT_TOKEN)
     await rubika_bot.start()
 
-    # --- هندلرهای رویدادها که آیتم به صف اضافه می‌کنند ---
     @user_client.on(events.NewMessage(chats=source_channel_ids))
     async def new_message_queue_handler(event):
         await event_queue.put(("new", event))
@@ -230,7 +227,6 @@ async def main(event_queue):
     async def deleted_message_queue_handler(event):
         await event_queue.put(("deleted", event))
     
-    # <---【اضافه شد】: ثبت هندلر برای دستورات ادمین
     @bot_client.on(events.NewMessage(from_users=TELEGRAM_ADMIN_IDS))
     async def admin_handler(event):
         await admin_command_handler(event)
