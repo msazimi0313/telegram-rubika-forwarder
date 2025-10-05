@@ -103,7 +103,12 @@ async def process_event(event, event_type):
             elif message.voice:
                 message_type = "voice"
                 file_path = await user_client.download_media(message.voice, file="downloads/")
-                sent_rubika_message = await rubika_bot.send_file(destination_id, file=file_path, type='Voice', reply_to_message_id=rubika_reply_to_id)
+                # <---【اصلاح شد】: استفاده از متد اختصاصی و صحیح send_voice
+                sent_rubika_message = await rubika_bot.send_voice(
+                    chat_id=destination_id,
+                    file=file_path,
+                    reply_to_message_id=rubika_reply_to_id
+                )
             elif message.document:
                 message_type = "document"
                 file_path = await user_client.download_media(message.document, file="downloads/")
@@ -246,4 +251,5 @@ async def main(event_queue):
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
+
 
