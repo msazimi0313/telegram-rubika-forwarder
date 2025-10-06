@@ -65,7 +65,6 @@ async def process_event(event, event_type):
         print(f"\n[پردازش پیام جدید] از {source_id} به {destination_id}")
         
         rubika_reply_to_id = None
-        # <---【اصلاح شد】: استفاده از متد صحیح برای دریافت شناسه ریپلای
         if message.is_reply and message.reply_to:
             telegram_reply_to_id = str(message.reply_to.reply_to_msg_id)
             mapping = message_map.get(telegram_reply_to_id)
@@ -79,7 +78,20 @@ async def process_event(event, event_type):
             message_type = "unknown"
             file_path = None
 
-            if message.text and not message.media:
+            # <---【ویژگی جدید】: پشتیبانی از نظرسنجی (Poll)
+            if message.poll:
+                message_type = "poll"
+                poll = message.poll
+                question = poll.question
+                # استخراج متن گزینه‌ها از آبجکت‌های answer
+                options = [answer.text for answer in poll.answers]
+                sent_rubika_message = await rubika_bot.send_poll(
+                    chat_id=destination_id,
+                    question=question,
+                    options=options
+                )
+            
+            elif message.text and not message.media:
                 message_type = "text"
                 sent_rubika_message = await rubika_bot.send_message(destination_id, message.text, reply_to_message_id=rubika_reply_to_id)
             elif message.photo:
@@ -93,22 +105,11 @@ async def process_event(event, event_type):
             elif message.audio:
                 message_type = "audio"
                 file_path = await user_client.download_media(message.audio, file="downloads/")
-                # <---【اصلاح شد】: استفاده از متد اختصاصی و صحیح send_music
-                sent_rubika_message = await rubika_bot.send_music(
-                    chat_id=destination_id,
-                    file=file_path,
-                    text=caption,
-                    reply_to_message_id=rubika_reply_to_id
-                )
+                sent_rubika_message = await rubika_bot.send_music(chat_id=destination_id, file=file_path, text=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.voice:
                 message_type = "voice"
                 file_path = await user_client.download_media(message.voice, file="downloads/")
-                # <---【اصلاح شد】: استفاده از متد اختصاصی و صحیح send_voice
-                sent_rubika_message = await rubika_bot.send_voice(
-                    chat_id=destination_id,
-                    file=file_path,
-                    reply_to_message_id=rubika_reply_to_id
-                )
+                sent_rubika_message = await rubika_bot.send_voice(chat_id=destination_id, file=file_path, reply_to_message_id=rubika_reply_to_id)
             elif message.document:
                 message_type = "document"
                 file_path = await user_client.download_media(message.document, file="downloads/")
@@ -133,6 +134,7 @@ async def process_event(event, event_type):
             stats["errors"] = stats.get("errors", 0) + 1
             save_data_to_file('stats.json', stats)
     
+    # ... بخش‌های event_type == "edited" و event_type == "deleted" بدون تغییر باقی می‌مانند ...
     elif event_type == "edited":
         edited_message = event.message
         print(f"\n[پردازش ویرایش پیام] شناسه: {edited_message.id}")
@@ -251,5 +253,6 @@ async def main(event_queue):
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
+
 
 
