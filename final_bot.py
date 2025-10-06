@@ -78,19 +78,36 @@ async def process_event(event, event_type):
             message_type = "unknown"
             file_path = None
 
-            # <---【ویژگی جدید】: پشتیبانی از نظرسنجی (Poll)
             if message.poll:
                 message_type = "poll"
                 poll = message.poll
                 question = poll.question
-                # استخراج متن گزینه‌ها از آبجکت‌های answer
                 options = [answer.text for answer in poll.answers]
-                sent_rubika_message = await rubika_bot.send_poll(
+                sent_rubika_message = await rubika_bot.send_poll(chat_id=destination_id, question=question, options=options)
+            
+            # <---【ویژگی جدید】: پشتیبانی از موقعیت مکانی (Location)
+            elif message.geo:
+                message_type = "location"
+                geo = message.geo
+                sent_rubika_message = await rubika_bot.send_location(
                     chat_id=destination_id,
-                    question=question,
-                    options=options
+                    latitude=geo.lat,
+                    longitude=geo.long,
+                    reply_to_message_id=rubika_reply_to_id
                 )
             
+            # <---【ویژگی جدید】: پشتیبانی از اطلاعات تماس (Contact)
+            elif message.contact:
+                message_type = "contact"
+                contact = message.contact
+                sent_rubika_message = await rubika_bot.send_contact(
+                    chat_id=destination_id,
+                    first_name=contact.first_name,
+                    last_name=contact.last_name,
+                    phone_number=contact.phone_number,
+                    reply_to_message_id=rubika_reply_to_id
+                )
+
             elif message.text and not message.media:
                 message_type = "text"
                 sent_rubika_message = await rubika_bot.send_message(destination_id, message.text, reply_to_message_id=rubika_reply_to_id)
@@ -253,6 +270,7 @@ async def main(event_queue):
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
+
 
 
 
