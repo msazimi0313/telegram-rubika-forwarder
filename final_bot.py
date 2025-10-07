@@ -123,10 +123,10 @@ async def process_event(event, event_type):
                 message_type = "text"
                 sent_rubika_message = await rubika_bot.send_message(destination_id, message.text, reply_to_message_id=rubika_reply_to_id, inline_keypad=inline_keypad)
             
-            # <---【ویژگی جدید】: پشتیبانی از GIF
-            elif message.animation:
+            # <---【اصلاح شد】: تشخیص صحیح GIF قبل از ویدیو و عکس
+            elif message.video and any(isinstance(attr, types.DocumentAttributeAnimated) for attr in message.video.attributes):
                  message_type = "gif"
-                 file_path = await user_client.download_media(message.animation, file="downloads/")
+                 file_path = await user_client.download_media(message.video, file="downloads/")
                  sent_rubika_message = await rubika_bot.send_file(destination_id, file=file_path, text=caption, type='Gif', reply_to_message_id=rubika_reply_to_id, inline_keypad=inline_keypad)
             
             elif message.photo:
@@ -179,7 +179,8 @@ async def process_event(event, event_type):
             new_content = edited_message.text or ""
             new_keypad = create_rubika_keypad(edited_message.buttons)
             await rubika_bot.edit_message_text(destination_id, rubika_id, new_content)
-            if new_keypad: await rubika_bot.edit_message_keypad(destination_id, rubika_id, new_keypad)
+            if new_keypad is not None:
+                await rubika_bot.edit_message_keypad(destination_id, rubika_id, new_keypad)
             print(f"-> پیام ({rubika_id}) در روبیکا ({destination_id}) ویرایش شد.")
     
     elif event_type == "deleted":
@@ -256,3 +257,4 @@ async def main(event_queue):
     await send_admin_notification("✅ ربات فورواردر با موفقیت آنلاین شد و آماده دریافت پیام است.")
     
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
+
