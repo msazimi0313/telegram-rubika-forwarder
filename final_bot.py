@@ -221,9 +221,9 @@ async def main(event_queue):
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
     
-    # 10. ساخت کلاینت سلف‌بات با استفاده از هر دو کلید
+    # <---【اصلاح نهایی و قطعی】: نام جلسه به عنوان اولین آرگومان و بدون کلیدواژه ارسال می‌شود
     rubika_self = Client(
-        session="rubika_account",
+        "rubika_account", # <<< این خط اصلاح شد
         auth=RUBIKA_AUTH_KEY,
         private_key=RUBIKA_PRIVATE_KEY
     )
