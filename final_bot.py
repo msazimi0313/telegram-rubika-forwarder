@@ -7,7 +7,7 @@ import jdatetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
-from rubpy import Client # <--- تغییر یافته: از BotClient به Client
+from rubpy import Client # 1. تغییر از BotClient به Client
 
 # ===============================================================
 # بخش تنظیمات
@@ -20,7 +20,11 @@ try:
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
-    RUBIKA_AUTH_KEY = os.environ.get("RUBIKA_AUTH_KEY") # <--- تغییر یافته: استفاده از کلید auth
+    
+    # 2. خواندن کلیدهای سلف‌بات
+    RUBIKA_AUTH_KEY = os.environ.get("RUBIKA_AUTH_KEY")
+    RUBIKA_PRIVATE_KEY = os.environ.get("RUBIKA_PRIVATE_KEY")
+
 except (TypeError, ValueError) as e:
     print(f"خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است: {e}")
     exit()
@@ -44,7 +48,7 @@ def save_data_to_file(filename, data):
 
 user_client: TelegramClient | None = None
 bot_client: TelegramClient | None = None
-rubika_self: Client | None = None # <--- تغییر یافته: نام متغیر برای وضوح بیشتر
+rubika_self: Client | None = None # 3. تغییر نام متغیر
 routing_map = {}
 message_map = {}
 stats = {}
@@ -57,14 +61,10 @@ async def send_admin_notification(text):
             except Exception as e:
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
-# <---【جدید】: تابع برای تبدیل دکمه‌های تلگرام به لینک در متن
+# 4. تابع جدید برای تبدیل دکمه به لینک متنی
 def format_caption_with_buttons(caption, telethon_buttons):
-    """
-    چون سلف‌بات دکمه شیشه‌ای ندارد، لینک‌ها را استخراج کرده و به متن اضافه می‌کنیم.
-    """
     if not telethon_buttons:
         return caption
-
     links_text = "\n\n🔗 لینک‌ها:\n"
     has_links = False
     for row in telethon_buttons:
@@ -72,7 +72,6 @@ def format_caption_with_buttons(caption, telethon_buttons):
             if isinstance(button, types.KeyboardButtonUrl):
                 links_text += f"▪️ {button.text}: {button.url}\n"
                 has_links = True
-    
     return caption + links_text if has_links else caption
 
 # ===============================================================
@@ -85,10 +84,8 @@ async def process_event(event, event_type):
     if event_type == "new":
         message = event.message
         source_id = message.chat_id
-        # در سلف‌بات، destination_id همان object_guid است
         destination_guid = routing_map.get(source_id)
         if not destination_guid: return
-
         print(f"\n[پردازش پیام جدید] از {source_id} به {destination_guid}")
         
         rubika_reply_to_id = None
@@ -98,26 +95,23 @@ async def process_event(event, event_type):
             if mapping: rubika_reply_to_id = mapping.get("rubika_id")
 
         try:
-            # <--- تغییر یافته: آماده‌سازی کپشن همراه با لینک‌های دکمه‌ها
             base_caption = message.text or ""
+            # 5. استفاده از تابع جدید
             caption_with_links = format_caption_with_buttons(base_caption, message.buttons)
             
             sent_rubika_message = None
             message_type = "unknown"
             file_path = None
 
-            # <--- حذف شده: قابلیت ارسال نظرسنجی، موقعیت مکانی و مخاطب در سلف‌بات وجود ندارد
+            # 6. حذف انواع پیام غیرپشتیبانی شده در سلف‌بات
             if message.media and isinstance(message.media, (types.MessageMediaPoll, types.MessageMediaGeo, types.MessageMediaContact)):
                 message_type = "unsupported"
                 unsupported_text = f"پیام از نوع '{type(message.media).__name__}' در تلگرام دریافت شد که توسط سلف‌بات روبیکا پشتیبانی نمی‌شود."
                 sent_rubika_message = await rubika_self.send_message(destination_guid, unsupported_text, reply_to_message_id=rubika_reply_to_id)
-
             elif message.text and not message.media:
                 message_type = "text"
                 sent_rubika_message = await rubika_self.send_message(destination_guid, caption_with_links, reply_to_message_id=rubika_reply_to_id)
-            
             elif message.photo or message.video or message.document or message.audio or message.voice:
-                # <--- تغییر یافته: همه فایل‌ها با یک منطق ارسال می‌شوند
                 file_path = await user_client.download_media(message, file="downloads/")
                 
                 if message.photo: message_type = "photo"
@@ -126,6 +120,7 @@ async def process_event(event, event_type):
                 elif message.voice: message_type = "voice"
                 else: message_type = "document"
 
+                # 7. استفاده از متد send_file برای همه فایل‌ها
                 sent_rubika_message = await rubika_self.send_file(
                     object_guid=destination_guid,
                     file=file_path,
@@ -134,7 +129,6 @@ async def process_event(event, event_type):
                 )
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
-
             if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
                 telegram_id = str(message.id)
                 rubika_id = sent_rubika_message.message_id
@@ -160,38 +154,34 @@ async def process_event(event, event_type):
         if mapping:
             rubika_id = mapping["rubika_id"]
             destination_guid = mapping["destination_id"]
-            # <--- تغییر یافته: متن جدید همراه با لینک دکمه‌های جدید فرمت می‌شود
             new_content = edited_message.text or ""
             new_content_with_links = format_caption_with_buttons(new_content, edited_message.buttons)
-            
-            # <--- تغییر یافته: استفاده از متد edit_message
+            # 8. استفاده از متد edit_message
             await rubika_self.edit_message(destination_guid, rubika_id, new_content_with_links)
             print(f"-> پیام ({rubika_id}) در روبیکا ({destination_guid}) ویرایش شد.")
     
     elif event_type == "deleted":
         print(f"\n[پردازش حذف پیام] شناسه‌ها: {event.deleted_ids}")
         try:
-            # <--- تغییر یافته: متد delete_messages لیستی از شناسه‌ها را برای هر چت می‌خواهد
-            messages_to_delete = {} # {guid: [msg_id1, msg_id2]}
+            messages_to_delete = {}
             for deleted_id in event.deleted_ids:
                 telegram_id = str(deleted_id)
                 if telegram_id in message_map:
-                    mapping = message_map.pop(telegram_id) # pop برای حذف همزمان
+                    mapping = message_map.pop(telegram_id)
                     rubika_id = mapping["rubika_id"]
                     destination_guid = mapping["destination_id"]
                     if destination_guid not in messages_to_delete:
                         messages_to_delete[destination_guid] = []
                     messages_to_delete[destination_guid].append(rubika_id)
-
+            
+            # 9. استفاده از متد delete_messages
             for guid, msg_ids in messages_to_delete.items():
                 await rubika_self.delete_messages(guid, msg_ids)
                 print(f"-> تعداد {len(msg_ids)} پیام در روبیکا ({guid}) حذف شد.")
-
             save_data_to_file('message_map.json', message_map)
         except Exception as e:
             print(f"!! خطا در پردازش حذف پیام: {e}")
 
-# ... (بخش پنل ادمین بدون تغییر باقی می‌ماند)
 async def admin_command_handler(event):
     global stats
     command = event.raw_text.lower()
@@ -216,7 +206,7 @@ async def admin_command_handler(event):
         await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
 # ===============================================================
-# تابع اصلی برنامه (main) - نسخه اصلاح شده
+# تابع اصلی برنامه (main)
 # ===============================================================
 async def main(event_queue):
     global user_client, bot_client, rubika_self, routing_map, message_map, stats
@@ -231,8 +221,12 @@ async def main(event_queue):
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
     
-    # <--- 【اصلاح شد】: اتصال به سلف روبیکا با آرگومان موقعیتی برای نام جلسه
-    rubika_self = Client("rubika_account", auth=RUBIKA_AUTH_KEY)
+    # 10. ساخت کلاینت سلف‌بات با استفاده از هر دو کلید
+    rubika_self = Client(
+        session="rubika_account",
+        auth=RUBIKA_AUTH_KEY,
+        private_key=RUBIKA_PRIVATE_KEY
+    )
     await rubika_self.start()
 
     @user_client.on(events.NewMessage(chats=source_channel_ids))
