@@ -1,10 +1,11 @@
 import asyncio
 from threading import Thread
 from flask import Flask
-from final_bot import main as run_bot_main
+# 【تغییر یافته】: main دیگر مستقیماً از final_bot ایمپورت نمی‌شود
+# چون event_queue باید به آن پاس داده شود.
 
-# ۱. ساخت صف برای رویدادها
-event_queue = asyncio.Queue()
+# ۱. ساخت صف از اینجا حذف و به داخل Thread منتقل می‌شود
+# event_queue = asyncio.Queue()  <--- این خط حذف می‌شود
 
 # ۲. تنظیم وب سرور Flask
 app = Flask(__name__)
@@ -14,7 +15,8 @@ def index():
     return "Bot is running successfully and queue is active!"
 
 # ۳. تعریف کارگر (Worker) که صف را پردازش می‌کند
-async def queue_worker():
+# 【تغییر یافته】: کارگر حالا صف را به عنوان آرگومان دریافت می‌کند
+async def queue_worker(event_queue):
     print("Queue worker started. Waiting for events...")
     while True:
         try:
@@ -32,9 +34,16 @@ def run_bot_and_worker():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
+    # 【تغییر یافته】: صف در اینجا و داخل حلقه جدید ساخته می‌شود
+    event_queue_in_thread = asyncio.Queue()
+    
+    # توابع اصلی را از final_bot ایمپورت می‌کنیم
+    from final_bot import main as run_bot_main
+    
     # اجرای همزمان ربات اصلی و کارگر پردازش صف
-    main_task = loop.create_task(run_bot_main(event_queue))
-    worker_task = loop.create_task(queue_worker())
+    # هر دو از یک صف مشترک که در همین حلقه ساخته شده استفاده می‌کنند
+    main_task = loop.create_task(run_bot_main(event_queue_in_thread))
+    worker_task = loop.create_task(queue_worker(event_queue_in_thread))
     
     loop.run_until_complete(asyncio.gather(main_task, worker_task))
     loop.close()
