@@ -123,11 +123,7 @@ async def process_event(event, event_type):
                 message_type = "text"
                 sent_rubika_message = await rubika_bot.send_message(destination_id, message.text, reply_to_message_id=rubika_reply_to_id, inline_keypad=inline_keypad)
             
-            # <---【اصلاح شد】: تشخیص صحیح GIF قبل از ویدیو و عکس
-            elif message.video and any(isinstance(attr, types.DocumentAttributeAnimated) for attr in message.video.attributes):
-                 message_type = "gif"
-                 file_path = await user_client.download_media(message.video, file="downloads/")
-                 sent_rubika_message = await rubika_bot.send_file(destination_id, file=file_path, text=caption, type='Gif', reply_to_message_id=rubika_reply_to_id, inline_keypad=inline_keypad)
+            # <--- بلوک کد مربوط به GIF از اینجا حذف شد --->
             
             elif message.photo:
                 message_type = "photo"
@@ -257,3 +253,4 @@ async def main(event_queue):
     await send_admin_notification("✅ ربات فورواردر با موفقیت آنلاین شد و آماده دریافت پیام است.")
     
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
+
