@@ -7,7 +7,7 @@ import jdatetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
-from rubpy import Client # <---【تغییر】: استفاده از Client به جای BotClient
+from rubpy import Client
 
 # ===============================================================
 # بخش تنظیمات
@@ -20,17 +20,14 @@ try:
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
-    # <---【تغییر】: تغییر نام متغیر برای استفاده از auth کد سلف
-    RUBIKA_AUTH_CODE = os.environ.get("RUBIKA_AUTH_CODE")
+    # <---【حذف شد】: متغیر RUBIKA_AUTH_CODE دیگر لازم نیست
 except (TypeError, ValueError) as e:
-    print(f"خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است: {e}")
+    print(f"خطا: یکی از متغیرهای محیطی تلگرام تنظیم نشده یا فرمت آن اشتباه است: {e}")
     exit()
 
 IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
 
-# ===============================================================
-# توابع کمکی
-# ===============================================================
+# ... (بقیه توابع کمکی بدون تغییر باقی می‌مانند) ...
 def get_default_stats():
     return {"total_forwarded": 0, "by_type": {}, "errors": 0, "last_activity_time": None}
 
@@ -45,7 +42,7 @@ def save_data_to_file(filename, data):
 
 user_client: TelegramClient | None = None
 bot_client: TelegramClient | None = None
-rubika_client: Client | None = None # <---【تغییر】: تغییر نام متغیر
+rubika_client: Client | None = None
 routing_map = {}
 message_map = {}
 stats = {}
@@ -58,11 +55,7 @@ async def send_admin_notification(text):
             except Exception as e:
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
-# <---【حذف شد】: تابع create_rubika_keypad چون سلف‌بات از دکمه شیشه‌ای پشتیبانی نمی‌کند.
-
-# ===============================================================
-# پردازشگر اصلی پیام‌ها (Worker Logic)
-# ===============================================================
+# ... (تابع process_event و بقیه توابع اصلی بدون تغییر باقی می‌مانند) ...
 async def process_event(event, event_type):
     global stats, message_map
     if not rubika_client: return
@@ -70,7 +63,6 @@ async def process_event(event, event_type):
     if event_type == "new":
         message = event.message
         source_id = message.chat_id
-        # در سلف‌بات، مقصد باید object_guid باشد
         destination_guid = routing_map.get(source_id)
         if not destination_guid: return
 
@@ -88,7 +80,6 @@ async def process_event(event, event_type):
             message_type = "unknown"
             file_path = None
 
-            # نظرسنجی در سلف پشتیبانی نمی‌شود، به صورت متنی ارسال می‌شود
             if message.media and isinstance(message.media, types.MessageMediaPoll):
                 message_type = "poll (as text)"
                 poll = message.media.poll
@@ -99,7 +90,6 @@ async def process_event(event, event_type):
             elif message.geo:
                 message_type = "location"
                 geo = message.geo
-                # ارسال لوکیشن در سلف به صورت مستقیم نیست، به صورت متن ارسال می‌شود
                 location_text = f"📍 موقعیت مکانی:\nLat: {geo.lat}, Long: {geo.long}"
                 sent_rubika_message = await rubika_client.send_message(destination_guid, location_text, reply_to_message_id=rubika_reply_to_id)
             elif message.contact:
@@ -159,14 +149,12 @@ async def process_event(event, event_type):
             rubika_id = mapping["rubika_id"]
             destination_guid = mapping["destination_id"]
             new_content = edited_message.text or ""
-            # <---【تغییر】: استفاده از متد edit_message
             await rubika_client.edit_message(destination_guid, rubika_id, new_content)
             print(f"-> پیام ({rubika_id}) در روبیکا ({destination_guid}) ویرایش شد.")
     
     elif event_type == "deleted":
         print(f"\n[پردازش حذف پیام] شناسه‌ها: {event.deleted_ids}")
         try:
-            # <---【تغییر】: متد delete_messages لیستی از شناسه‌ها را می‌پذیرد
             to_delete_in_rubika = {}
             for deleted_id in event.deleted_ids:
                 telegram_id = str(deleted_id)
@@ -225,8 +213,11 @@ async def main(event_queue):
     print("در حال اتصال کلاینت‌ها...")
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
-    # <---【تغییر】: ساخت نمونه از Client با auth کد
-    rubika_client = Client(RUBIKA_AUTH_CODE)
+    
+    # <---【تغییر کلیدی】: استفاده از نام session برای اتصال مستقیم
+    # ربات به دنبال فایلی به نام my_account.session خواهد گشت
+    rubika_client = Client("my_account")
+    
     await rubika_client.start()
 
     @user_client.on(events.NewMessage(chats=source_channel_ids))
