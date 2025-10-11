@@ -8,6 +8,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
 from rubpy import Client
+import traceback
 
 # ===============================================================
 # بخش تنظیمات (بدون تغییر)
@@ -101,7 +102,6 @@ async def process_event(event, event_type):
                 file_path = await user_client.download_media(message, file="downloads/")
                 print(f"-> دانلود کامل شد: {file_path}")
 
-                # ---【اصلاح کلیدی: ارسال آرگومان‌ها به صورت موقعیتی】---
                 if message.photo:
                     message_type = "photo"
                     sent_rubika_message = await rubika_self.send_photo(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
@@ -133,12 +133,18 @@ async def process_event(event, event_type):
                 print(f"-> پیام از نوع '{message_type}' با موفقیت ارسال و مپ شد.")
 
         except Exception as e:
+            # ---【اصلاح کلیدی: چاپ کامل Traceback خطا】---
             error_message = f"!! خطا در پردازش پیام جدید: {e}"
             print(error_message)
+            
+            # این خط، جزئیات کامل خطا را در لاگ‌ها چاپ می‌کند
+            traceback.print_exc()
+            
             stats["errors"] = stats.get("errors", 0) + 1
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
 
+    # ... (بقیه تابع process_event بدون تغییر)
     elif event_type == "edited":
         edited_message = event.message
         telegram_id = str(edited_message.id)
@@ -164,7 +170,7 @@ async def process_event(event, event_type):
                 print(f"-> {len(msg_ids)} پیام در {guid} حذف شد.")
             save_data_to_file('message_map.json', message_map)
         except Exception as e: print(f"!! خطا در پردازش حذف پیام: {e}")
-
+            
 # ... (بقیه فایل، شامل admin_command_handler و main، بدون تغییر است) ...
 async def admin_command_handler(event):
     global stats
@@ -213,3 +219,4 @@ async def main(event_queue):
     print("کلاینت‌های تلگرام و روبیکا (سلف) با موفقیت آنلاین شدند.")
     await send_admin_notification("✅ ربات فورواردر با موفقیت آنلاین شد. (حالت: سلف‌بات)")
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
+
