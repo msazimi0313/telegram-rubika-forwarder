@@ -104,23 +104,56 @@ async def process_event(event, event_type):
                 file_path = await user_client.download_media(message, file="downloads/")
                 print(f"-> دانلود کامل شد: {file_path}")
 
-                # ---【منطق جدید و صحیح با متدهای اختصاصی و آرگومان‌های موقعیتی】---
+                file_size = os.path.getsize(file_path)
+                file_name = os.path.basename(file_path)
+                
+                # ---【اصلاح نهایی و قطعی: استفاده از mime_type ثابت و استاندارد】---
                 if message.photo:
+                    mime_type = 'image/jpeg'
                     message_type = "photo"
-                    sent_rubika_message = await rubika_self.send_photo(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
                 elif message.video:
+                    mime_type = 'video/mp4'
                     message_type = "video"
-                    sent_rubika_message = await rubika_self.send_video(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
-                elif message.voice:
-                    message_type = "voice"
-                    sent_rubika_message = await rubika_self.send_voice(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
-                elif message.audio or message.document:
-                    message_type = "document" if message.document else "audio"
-                    sent_rubika_message = await rubika_self.send_document(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                else:
+                    mime_type = 'application/octet-stream'
+                    message_type = "document"
+
+                print(f"-> مرحله ۱: درخواست لینک آپلود از روبیکا (Mime: {mime_type})...")
+                upload_data = await rubika_self.request_send_file(file_name=file_name, size=file_size, mime=mime_type)
+                
+                print("-> مرحله ۲: شروع آپلود دستی...")
+                with open(file_path, 'rb') as f:
+                    file_bytes = f.read()
+
+                async with ClientSession() as session:
+                    headers = {
+                        'auth': rubika_self.auth,
+                        'file-id': str(upload_data['id']),
+                        'access-hash-send': upload_data['access_hash_send'],
+                        'content-type': 'application/octet-stream'
+                    }
+                    async with session.post(upload_data['upload_url'], data=file_bytes, headers=headers) as response:
+                        response_text = await response.text()
+                        if response.status == 200 and '"status":"OK"' in response_text:
+                            print("-> آپلود دستی موفق بود.")
+                        else:
+                            raise Exception(f"خطا در آپلود دستی: {response.status} {response_text}")
+
+                print("-> مرحله ۳: ارسال پیام نهایی...")
+                sent_rubika_message = await rubika_self.send_message(
+                    object_guid=destination_guid,
+                    message=caption_with_links,
+                    file_inline=upload_data,
+                    reply_to_message_id=rubika_reply_to_id
+                )
 
             elif message.text and not message.media:
                 message_type = "text"
-                sent_rubika_message = await rubika_self.send_message(destination_guid, text=caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_self.send_message(
+                    object_guid=destination_guid,
+                    text=caption_with_links,
+                    reply_to_message_id=rubika_reply_to_id
+                )
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
 
@@ -143,8 +176,8 @@ async def process_event(event, event_type):
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
 
+    # ... (بقیه تابع process_event بدون تغییر)
     elif event_type == "edited":
-        # ... (کد ویرایش بدون تغییر)
         edited_message = event.message
         telegram_id = str(edited_message.id)
         mapping = message_map.get(telegram_id)
@@ -155,7 +188,6 @@ async def process_event(event, event_type):
             print(f"-> پیام ({mapping['rubika_id']}) ویرایش شد.")
 
     elif event_type == "deleted":
-        # ... (کد حذف بدون تغییر)
         try:
             messages_to_delete = {}
             for deleted_id in event.deleted_ids:
@@ -219,3 +251,4 @@ async def main(event_queue):
     print("کلاینت‌های تلگرام و روبیکا (سلف) با موفقیت آنلاین شدند.")
     await send_admin_notification("✅ ربات فورواردر با موفقیت آنلاین شد. (حالت: سلف‌بات)")
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
+
