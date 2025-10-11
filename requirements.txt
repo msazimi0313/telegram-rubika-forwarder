@@ -8,3 +8,4 @@ rubpy
 Telethon
 pycryptodome
 Pillow
+numpy
