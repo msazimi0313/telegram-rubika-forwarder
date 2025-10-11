@@ -16,7 +16,7 @@ try:
     API_ID = int(os.environ.get("TELEGRAM_API_ID"))
     API_HASH = os.environ.get("TELEGRAM_API_HASH")
     SESSION_STRING = os.environ.get("TELEGRAM_SESSION_STRING")
-    TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN"))
+    TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
@@ -270,3 +270,4 @@ async def main(event_queue):
     await send_admin_notification("✅ ربات فورواردر با موفقیت آنلاین شد. (حالت: سلف‌بات)")
     
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
+
