@@ -4,8 +4,8 @@ import json
 from datetime import datetime
 import pytz
 import jdatetime
-import mimetypes # <---【جدید】: برای تشخیص نوع فایل
-from aiohttp import ClientSession # <---【جدید】: برای آپلود دستی فایل
+import mimetypes
+from aiohttp import ClientSession
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
@@ -69,7 +69,7 @@ def format_caption_with_buttons(caption, telethon_buttons):
 
 
 # ===============================================================
-# 【بازنویسی نهایی و قطعی】: پردازشگر اصلی پیام‌ها
+# پردازشگر اصلی پیام‌ها (نسخه نهایی)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -99,7 +99,6 @@ async def process_event(event, event_type):
                 print("-> پیام خالی نادیده گرفته شد.")
                 return
 
-            # ---【منطق کاملاً جدید و صحیح برای ارسال فایل】---
             if message.media and not isinstance(message.media, (types.MessageMediaPoll, types.MessageMediaGeo, types.MessageMediaContact)):
                 print("-> پیام حاوی رسانه است. شروع دانلود...")
                 file_path = await user_client.download_media(message, file="downloads/")
@@ -110,11 +109,9 @@ async def process_event(event, event_type):
                 mime_type = mimetypes.guess_type(file_path)[0] or 'application/octet-stream'
                 message_type = "photo" if message.photo else "video" if message.video else "audio" if message.audio or message.voice else "document"
 
-                # مرحله ۱: درخواست لینک آپلود از روبیکا
                 print("-> مرحله ۱: درخواست لینک آپلود از روبیکا...")
                 upload_data = await rubika_self.request_send_file(file_name=file_name, size=file_size, mime=mime_type)
                 
-                # مرحله ۲: خواندن فایل و آپلود دستی با aiohttp
                 print("-> مرحله ۲: شروع آپلود دستی...")
                 with open(file_path, 'rb') as f:
                     file_bytes = f.read()
@@ -125,13 +122,13 @@ async def process_event(event, event_type):
                         'file-id': str(upload_data['id']),
                         'access-hash-send': upload_data['access_hash_send']
                     }
-                    async with session.put(upload_data['upload_url'], data=file_bytes, headers=headers) as response:
+                    # 【اصلاح نهایی و قطعی】: استفاده از متد POST به جای PUT
+                    async with session.post(upload_data['upload_url'], data=file_bytes, headers=headers) as response:
                         if response.status == 200:
                             print("-> آپلود دستی موفق بود.")
                         else:
                             raise Exception(f"خطا در آپلود دستی: {response.status} {await response.text()}")
 
-                # مرحله ۳: ارسال پیام با اطلاعات فایل آپلود شده
                 print("-> مرحله ۳: ارسال پیام نهایی...")
                 sent_rubika_message = await rubika_self.send_message(
                     object_guid=destination_guid,
@@ -140,7 +137,6 @@ async def process_event(event, event_type):
                     reply_to_message_id=rubika_reply_to_id
                 )
 
-            # ---【منطق ارسال متن ساده (بدون تغییر)】---
             elif message.text and not message.media:
                 message_type = "text"
                 sent_rubika_message = await rubika_self.send_message(
@@ -151,13 +147,11 @@ async def process_event(event, event_type):
             
             # ... (بقیه کد بدون تغییر)
             elif message.media:
-                # ...
-                pass # هندل کردن پیام‌های پشتیبانی نشده
+                pass 
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
 
             if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
-                # ... (بخش ذخیره سازی آمار بدون تغییر)
                 telegram_id = str(message.id)
                 rubika_id = sent_rubika_message.message_id
                 message_map[telegram_id] = {"rubika_id": rubika_id, "destination_id": destination_guid}
@@ -169,15 +163,14 @@ async def process_event(event, event_type):
                 print(f"-> پیام از نوع '{message_type}' با موفقیت ارسال و مپ شد.")
 
         except Exception as e:
-            # ... (بخش مدیریت خطا بدون تغییر)
             error_message = f"!! خطا در پردازش پیام جدید: {e}"
             print(error_message)
             stats["errors"] = stats.get("errors", 0) + 1
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
 
-    # ... (بخش ویرایش و حذف پیام بدون تغییر)
     elif event_type == "edited":
+        # ... (کد ویرایش بدون تغییر)
         edited_message = event.message
         telegram_id = str(edited_message.id)
         mapping = message_map.get(telegram_id)
@@ -188,6 +181,7 @@ async def process_event(event, event_type):
             print(f"-> پیام ({mapping['rubika_id']}) ویرایش شد.")
 
     elif event_type == "deleted":
+        # ... (کد حذف بدون تغییر)
         try:
             messages_to_delete = {}
             for deleted_id in event.deleted_ids:
