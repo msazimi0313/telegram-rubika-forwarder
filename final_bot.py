@@ -10,7 +10,7 @@ from telethon.tl import types
 from rubpy import Client
 
 # ===============================================================
-# بخش تنظیمات (بدون تغییر)
+# بخش تنظیمات
 # ===============================================================
 try:
     API_ID = int(os.environ.get("TELEGRAM_API_ID"))
@@ -27,14 +27,19 @@ except (TypeError, ValueError) as e:
     exit()
 
 IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
-# ... (توابع کمکی و admin_command_handler بدون تغییر) ...
+
+# ===============================================================
+# توابع کمکی
+# ===============================================================
 def get_default_stats():
     return {"total_forwarded": 0, "by_type": {}, "errors": 0, "last_activity_time": None}
+
 def load_data_from_file(filename, default_data):
     try:
         with open(filename, 'r') as f: return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return default_data
+
 def save_data_to_file(filename, data):
     with open(filename, 'w') as f: json.dump(data, f, indent=4)
 
@@ -66,7 +71,7 @@ def format_caption_with_buttons(caption, telethon_buttons):
     return caption + links_text if has_links else caption
 
 # ===============================================================
-# 【بازنویسی نهایی بر اساس ارسال موقعیتی آرگومان‌ها】
+# پردازشگر اصلی پیام‌ها (بر اساس ارسال موقعیتی آرگومان‌ها)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -101,7 +106,7 @@ async def process_event(event, event_type):
                 file_path = await user_client.download_media(message, file="downloads/")
                 print(f"-> دانلود کامل شد: {file_path}")
 
-                # ---【اصلاح کلیدی: ارسال آرگومان‌ها به صورت موقعیتی】---
+                # ---【اصلاح کلیدی: ارسال آرگومان‌ها به صورت موقعیتی و بدون نام】---
                 if message.photo:
                     message_type = "photo"
                     sent_rubika_message = await rubika_self.send_photo(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
@@ -165,7 +170,9 @@ async def process_event(event, event_type):
             save_data_to_file('message_map.json', message_map)
         except Exception as e: print(f"!! خطا در پردازش حذف پیام: {e}")
 
-# ... (بقیه فایل، شامل admin_command_handler و main، بدون تغییر است) ...
+# ===============================================================
+# پنل ادمین
+# ===============================================================
 async def admin_command_handler(event):
     global stats
     command = event.raw_text.lower()
@@ -189,6 +196,9 @@ async def admin_command_handler(event):
         save_data_to_file('stats.json', stats)
         await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
+# ===============================================================
+# تابع اصلی برنامه (main)
+# ===============================================================
 async def main(event_queue):
     global user_client, bot_client, rubika_self, routing_map, message_map, stats
     pairs = CHANNEL_MAP_STR.split(','); [routing_map.update({int(p.split(':', 1)[0].strip()): p.split(':', 1)[1].strip()}) for p in pairs if ':' in p]
