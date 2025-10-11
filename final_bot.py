@@ -106,10 +106,19 @@ async def process_event(event, event_type):
 
                 file_size = os.path.getsize(file_path)
                 file_name = os.path.basename(file_path)
-                mime_type = mimetypes.guess_type(file_path)[0] or 'application/octet-stream'
-                message_type = "photo" if message.photo else "video" if message.video else "audio" if message.audio or message.voice else "document"
+                
+                # ---【اصلاح نهایی و قطعی: استفاده از mime_type ثابت و استاندارد】---
+                if message.photo:
+                    mime_type = 'image/jpeg'
+                    message_type = "photo"
+                elif message.video:
+                    mime_type = 'video/mp4'
+                    message_type = "video"
+                else:
+                    mime_type = 'application/octet-stream'
+                    message_type = "document"
 
-                print("-> مرحله ۱: درخواست لینک آپلود از روبیکا...")
+                print(f"-> مرحله ۱: درخواست لینک آپلود از روبیکا (Mime: {mime_type})...")
                 upload_data = await rubika_self.request_send_file(file_name=file_name, size=file_size, mime=mime_type)
                 
                 print("-> مرحله ۲: شروع آپلود دستی...")
@@ -117,12 +126,11 @@ async def process_event(event, event_type):
                     file_bytes = f.read()
 
                 async with ClientSession() as session:
-                    # ---【اصلاح نهایی و قطعی: افزودن هدر Content-Type】---
                     headers = {
                         'auth': rubika_self.auth,
                         'file-id': str(upload_data['id']),
                         'access-hash-send': upload_data['access_hash_send'],
-                        'content-type': 'application/octet-stream' # <-- این خط اضافه شد
+                        'content-type': 'application/octet-stream'
                     }
                     async with session.post(upload_data['upload_url'], data=file_bytes, headers=headers) as response:
                         response_text = await response.text()
@@ -243,4 +251,5 @@ async def main(event_queue):
     print("کلاینت‌های تلگرام و روبیکا (سلف) با موفقیت آنلاین شدند.")
     await send_admin_notification("✅ ربات فورواردر با موفقیت آنلاین شد. (حالت: سلف‌بات)")
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
+
 
