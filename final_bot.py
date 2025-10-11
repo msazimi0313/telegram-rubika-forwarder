@@ -4,8 +4,6 @@ import json
 from datetime import datetime
 import pytz
 import jdatetime
-import mimetypes
-from aiohttp import ClientSession
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
@@ -67,9 +65,8 @@ def format_caption_with_buttons(caption, telethon_buttons):
                 has_links = True
     return caption + links_text if has_links else caption
 
-
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (نسخه نهایی)
+# 【بازنویسی نهایی بر اساس مستندات صحیح】: پردازشگر اصلی پیام‌ها
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -98,57 +95,32 @@ async def process_event(event, event_type):
             if not caption_with_links.strip() and not message.media:
                 print("-> پیام خالی نادیده گرفته شد.")
                 return
-
+            
+            # ---【منطق جدید و صحیح با متدهای اختصاصی】---
             if message.media and not isinstance(message.media, (types.MessageMediaPoll, types.MessageMediaGeo, types.MessageMediaContact)):
                 print("-> پیام حاوی رسانه است. شروع دانلود...")
                 file_path = await user_client.download_media(message, file="downloads/")
                 print(f"-> دانلود کامل شد: {file_path}")
 
-                file_size = os.path.getsize(file_path)
-                file_name = os.path.basename(file_path)
-                mime_type = mimetypes.guess_type(file_path)[0] or 'application/octet-stream'
-                message_type = "photo" if message.photo else "video" if message.video else "audio" if message.audio or message.voice else "document"
+                if message.photo:
+                    message_type = "photo"
+                    sent_rubika_message = await rubika_self.send_photo(destination_guid, photo=file_path, caption=caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                elif message.video:
+                    message_type = "video"
+                    sent_rubika_message = await rubika_self.send_video(destination_guid, video=file_path, caption=caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                elif message.voice:
+                    message_type = "voice"
+                    sent_rubika_message = await rubika_self.send_voice(destination_guid, voice=file_path, caption=caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                elif message.audio or message.document:
+                    message_type = "document" if message.document else "audio"
+                    sent_rubika_message = await rubika_self.send_document(destination_guid, document=file_path, caption=caption_with_links, reply_to_message_id=rubika_reply_to_id)
 
-                print("-> مرحله ۱: درخواست لینک آپلود از روبیکا...")
-                upload_data = await rubika_self.request_send_file(file_name=file_name, size=file_size, mime=mime_type)
-                
-                print("-> مرحله ۲: شروع آپلود دستی...")
-                with open(file_path, 'rb') as f:
-                    file_bytes = f.read()
-
-                async with ClientSession() as session:
-                    headers = {
-                        'auth': rubika_self.auth,
-                        'file-id': str(upload_data['id']),
-                        'access-hash-send': upload_data['access_hash_send']
-                    }
-                    # 【اصلاح نهایی و قطعی】: استفاده از متد POST به جای PUT
-                    async with session.post(upload_data['upload_url'], data=file_bytes, headers=headers) as response:
-                        if response.status == 200:
-                            print("-> آپلود دستی موفق بود.")
-                        else:
-                            raise Exception(f"خطا در آپلود دستی: {response.status} {await response.text()}")
-
-                print("-> مرحله ۳: ارسال پیام نهایی...")
-                sent_rubika_message = await rubika_self.send_message(
-                    object_guid=destination_guid,
-                    message=caption_with_links,
-                    file_inline=upload_data,
-                    reply_to_message_id=rubika_reply_to_id
-                )
-
+            # ---【منطق ارسال متن ساده】---
             elif message.text and not message.media:
                 message_type = "text"
-                sent_rubika_message = await rubika_self.send_message(
-                    object_guid=destination_guid,
-                    text=caption_with_links,
-                    reply_to_message_id=rubika_reply_to_id
-                )
-            
-            # ... (بقیه کد بدون تغییر)
-            elif message.media:
-                pass 
+                sent_rubika_message = await rubika_self.send_message(destination_guid, text=caption_with_links, reply_to_message_id=rubika_reply_to_id)
 
+            # ... (بقیه کد)
             if file_path and os.path.exists(file_path): os.remove(file_path)
 
             if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
@@ -170,7 +142,6 @@ async def process_event(event, event_type):
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
 
     elif event_type == "edited":
-        # ... (کد ویرایش بدون تغییر)
         edited_message = event.message
         telegram_id = str(edited_message.id)
         mapping = message_map.get(telegram_id)
@@ -181,7 +152,6 @@ async def process_event(event, event_type):
             print(f"-> پیام ({mapping['rubika_id']}) ویرایش شد.")
 
     elif event_type == "deleted":
-        # ... (کد حذف بدون تغییر)
         try:
             messages_to_delete = {}
             for deleted_id in event.deleted_ids:
