@@ -106,22 +106,27 @@ async def process_event(event, event_type):
                 file_path = await user_client.download_media(message, file="downloads/")
                 print(f"-> دانلود کامل شد: {file_path}")
 
-                # ---【اصلاح کلیدی: ارسال آرگومان‌ها به صورت موقعیتی و بدون نام】---
+                # ---【اصلاح تستی: حذف reply_to_message_id از متدهای فایل】---
                 if message.photo:
                     message_type = "photo"
-                    sent_rubika_message = await rubika_self.send_photo(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                    # reply_to_message_id حذف شد
+                    sent_rubika_message = await rubika_self.send_photo(destination_guid, file_path, caption_with_links)
                 elif message.video:
                     message_type = "video"
-                    sent_rubika_message = await rubika_self.send_video(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                    # reply_to_message_id حذف شد
+                    sent_rubika_message = await rubika_self.send_video(destination_guid, file_path, caption_with_links)
                 elif message.voice:
                     message_type = "voice"
-                    sent_rubika_message = await rubika_self.send_voice(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                    # reply_to_message_id حذف شد
+                    sent_rubika_message = await rubika_self.send_voice(destination_guid, file_path, caption_with_links)
                 elif message.audio or message.document:
                     message_type = "document" if message.document else "audio"
-                    sent_rubika_message = await rubika_self.send_document(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                    # reply_to_message_id حذف شد
+                    sent_rubika_message = await rubika_self.send_document(destination_guid, file_path, caption_with_links)
 
             elif message.text and not message.media:
                 message_type = "text"
+                # برای پیام متنی، ریپلای باقی می‌ماند تا مقایسه کنیم
                 sent_rubika_message = await rubika_self.send_message(destination_guid, text=caption_with_links, reply_to_message_id=rubika_reply_to_id)
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
@@ -143,7 +148,8 @@ async def process_event(event, event_type):
             stats["errors"] = stats.get("errors", 0) + 1
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
-
+    
+    # ... بقیه تابع process_event (بخش edited و deleted) بدون تغییر ...
     elif event_type == "edited":
         edited_message = event.message
         telegram_id = str(edited_message.id)
@@ -223,3 +229,4 @@ async def main(event_queue):
     print("کلاینت‌های تلگرام و روبیکا (سلف) با موفقیت آنلاین شدند.")
     await send_admin_notification("✅ ربات فورواردر با موفقیت آنلاین شد. (حالت: سلف‌بات)")
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
+
