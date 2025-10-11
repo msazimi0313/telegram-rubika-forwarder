@@ -66,9 +66,8 @@ def format_caption_with_buttons(caption, telethon_buttons):
                 has_links = True
     return caption + links_text if has_links else caption
 
-
 # ===============================================================
-# 【بازنویسی کامل】: پردازشگر اصلی پیام‌ها (Worker Logic)
+# 【بازنویسی نهایی】: پردازشگر اصلی پیام‌ها (Worker Logic)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -95,35 +94,24 @@ async def process_event(event, event_type):
             message_type = "unknown"
             file_path = None
             
-            # ----------------- بخش ارسال فایل (منطق جدید) -----------------
+            # جلوگیری از ارسال پیام خالی
+            if not caption_with_links.strip() and not message.media:
+                print("-> پیام خالی یا سرویس است، نادیده گرفته شد.")
+                return
+
             if message.media and not isinstance(message.media, (types.MessageMediaPoll, types.MessageMediaGeo, types.MessageMediaContact)):
                 print("-> پیام حاوی رسانه است. شروع دانلود...")
                 file_path = await user_client.download_media(message, file="downloads/")
                 print(f"-> دانلود کامل شد: {file_path}")
-
-                file_size = os.path.getsize(file_path)
                 
-                # تعیین نوع فایل برای روبیکا
-                file_type = None
-                if message.photo:
-                    message_type = "photo"
-                    file_type = "Image"
-                elif message.video:
-                    message_type = "video"
-                    file_type = "Video"
-                elif message.audio or message.voice:
-                    message_type = "audio"
-                    file_type = "Music"
-                else: # Document
-                    message_type = "document"
-                    file_type = "File"
+                file_type = "Image" if message.photo else "Video" if message.video else "Music" if message.audio or message.voice else "File"
+                message_type = "photo" if message.photo else "video" if message.video else "audio" if message.audio or message.voice else "document"
 
-                print(f"-> شروع آپلود فایل '{file_path}' به روبیکا (نوع: {file_type})...")
-                # مرحله ۱: آپلود فایل و دریافت file_id
+                print(f"-> شروع آپلود فایل به روبیکا (نوع: {file_type})...")
                 uploaded_file = await rubika_self.upload_file(file_path, file_type=file_type)
-                print(f"-> آپلود کامل شد. File ID: {uploaded_file.file_id}")
+                print(f"-> آپلود کامل شد.")
                 
-                # مرحله ۲: ارسال پیام با استفاده از file_id
+                # 【اصلاح کلیدی】: برای فایل‌ها از پارامتر message استفاده می‌شود
                 sent_rubika_message = await rubika_self.send_message(
                     object_guid=destination_guid,
                     message=caption_with_links,
@@ -131,25 +119,22 @@ async def process_event(event, event_type):
                     reply_to_message_id=rubika_reply_to_id
                 )
 
-            # ----------------- بخش پیام متنی ساده -----------------
             elif message.text and not message.media:
                 message_type = "text"
+                # 【اصلاح کلیدی】: برای متن ساده از پارامتر text استفاده می‌شود
                 sent_rubika_message = await rubika_self.send_message(
                     object_guid=destination_guid,
-                    message=caption_with_links,
+                    text=caption_with_links,
                     reply_to_message_id=rubika_reply_to_id
                 )
             
-            # ----------------- بخش پیام‌های پشتیبانی نشده -----------------
             elif message.media:
                 message_type = "unsupported"
-                unsupported_text = f"پیام از نوع '{type(message.media).__name__}' در تلگرام دریافت شد که توسط سلف‌بات روبیکا پشتیبانی نمی‌شود."
-                sent_rubika_message = await rubika_self.send_message(destination_guid, unsupported_text, reply_to_message_id=rubika_reply_to_id)
+                unsupported_text = f"پیام از نوع '{type(message.media).__name__}' ... پشتیبانی نمی‌شود."
+                sent_rubika_message = await rubika_self.send_message(destination_guid, text=unsupported_text, reply_to_message_id=rubika_reply_to_id)
 
-            # پاک کردن فایل دانلود شده
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
-                print(f"-> فایل موقت '{file_path}' حذف شد.")
 
             if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
                 telegram_id = str(message.id)
@@ -169,46 +154,36 @@ async def process_event(event, event_type):
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
     
-    # ... (بخش event_type == "edited" و "deleted" بدون تغییر باقی می‌ماند) ...
     elif event_type == "edited":
-        # ... (کد قبلی صحیح است)
+        # ... (کد قبلی صحیح است و از `edit_message` با پارامتر `message` استفاده می‌کند)
         edited_message = event.message
-        print(f"\n[پردازش ویرایش پیام] شناسه: {edited_message.id}")
         telegram_id = str(edited_message.id)
         mapping = message_map.get(telegram_id)
         if mapping:
-            rubika_id = mapping["rubika_id"]
-            destination_guid = mapping["destination_id"]
             new_content = edited_message.text or ""
             new_content_with_links = format_caption_with_buttons(new_content, edited_message.buttons)
-            await rubika_self.edit_message(destination_guid, rubika_id, new_content_with_links)
-            print(f"-> پیام ({rubika_id}) در روبیکا ({destination_guid}) ویرایش شد.")
-    
+            await rubika_self.edit_message(mapping["destination_id"], mapping["rubika_id"], new_content_with_links)
+            print(f"-> پیام ({mapping['rubika_id']}) ویرایش شد.")
+
     elif event_type == "deleted":
         # ... (کد قبلی صحیح است)
-        print(f"\n[پردازش حذف پیام] شناسه‌ها: {event.deleted_ids}")
         try:
             messages_to_delete = {}
             for deleted_id in event.deleted_ids:
                 telegram_id = str(deleted_id)
                 if telegram_id in message_map:
                     mapping = message_map.pop(telegram_id)
-                    rubika_id = mapping["rubika_id"]
-                    destination_guid = mapping["destination_id"]
-                    if destination_guid not in messages_to_delete:
-                        messages_to_delete[destination_guid] = []
-                    messages_to_delete[destination_guid].append(rubika_id)
-            
+                    guid = mapping["destination_id"]
+                    if guid not in messages_to_delete: messages_to_delete[guid] = []
+                    messages_to_delete[guid].append(mapping["rubika_id"])
             for guid, msg_ids in messages_to_delete.items():
                 await rubika_self.delete_messages(guid, msg_ids)
-                print(f"-> تعداد {len(msg_ids)} پیام در روبیکا ({guid}) حذف شد.")
+                print(f"-> {len(msg_ids)} پیام در {guid} حذف شد.")
             save_data_to_file('message_map.json', message_map)
-        except Exception as e:
-            print(f"!! خطا در پردازش حذف پیام: {e}")
+        except Exception as e: print(f"!! خطا در پردازش حذف پیام: {e}")
 
-
+# ... (بقیه فایل، شامل admin_command_handler و main، بدون تغییر است) ...
 async def admin_command_handler(event):
-    # ... (کد قبلی صحیح است)
     global stats
     command = event.raw_text.lower()
     if command == "/start" or command == "/admin":
@@ -231,29 +206,17 @@ async def admin_command_handler(event):
         save_data_to_file('stats.json', stats)
         await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
-# ===============================================================
-# تابع اصلی برنامه (main)
-# ===============================================================
 async def main(event_queue):
     global user_client, bot_client, rubika_self, routing_map, message_map, stats
-    
     pairs = CHANNEL_MAP_STR.split(','); [routing_map.update({int(p.split(':', 1)[0].strip()): p.split(':', 1)[1].strip()}) for p in pairs if ':' in p]
     source_channel_ids = list(routing_map.keys())
-    
     message_map = load_data_from_file('message_map.json', {}); stats = load_data_from_file('stats.json', get_default_stats())
     if not os.path.exists("downloads"): os.makedirs("downloads")
-
     print("در حال اتصال کلاینت‌ها...")
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
-    
-    rubika_self = Client(
-        "rubika_account",
-        auth=RUBIKA_AUTH_KEY,
-        private_key=RUBIKA_PRIVATE_KEY
-    )
+    rubika_self = Client("rubika_account", auth=RUBIKA_AUTH_KEY, private_key=RUBIKA_PRIVATE_KEY)
     await rubika_self.start()
-
     @user_client.on(events.NewMessage(chats=source_channel_ids))
     async def handler(e): await event_queue.put(("new", e))
     @user_client.on(events.MessageEdited(chats=source_channel_ids))
@@ -262,12 +225,8 @@ async def main(event_queue):
     async def handler(e): await event_queue.put(("deleted", e))
     @bot_client.on(events.NewMessage(from_users=TELEGRAM_ADMIN_IDS))
     async def handler(e): await admin_command_handler(e)
-
     print("ربات آماده به کار است...")
     await user_client.start(); await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
     print("کلاینت‌های تلگرام و روبیکا (سلف) با موفقیت آنلاین شدند.")
-    
-    await send_admin_notification("✅ ربات فورواردر با موفقیت آنلاین شد. (حالت: سلف‌بات)")
-    
+    await send_admin_notification("✅ ربات فورواردر با موفقیت آنلاین شد. (حalt: سلف‌بات)")
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
-
