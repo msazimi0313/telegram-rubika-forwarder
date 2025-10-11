@@ -10,7 +10,7 @@ from telethon.tl import types
 from rubpy import Client
 
 # ===============================================================
-# بخش تنظیمات
+# بخش تنظیمات (بدون تغییر)
 # ===============================================================
 try:
     API_ID = int(os.environ.get("TELEGRAM_API_ID"))
@@ -27,19 +27,14 @@ except (TypeError, ValueError) as e:
     exit()
 
 IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
-
-# ===============================================================
-# توابع کمکی
-# ===============================================================
+# ... (توابع کمکی و admin_command_handler بدون تغییر) ...
 def get_default_stats():
     return {"total_forwarded": 0, "by_type": {}, "errors": 0, "last_activity_time": None}
-
 def load_data_from_file(filename, default_data):
     try:
         with open(filename, 'r') as f: return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return default_data
-
 def save_data_to_file(filename, data):
     with open(filename, 'w') as f: json.dump(data, f, indent=4)
 
@@ -71,7 +66,7 @@ def format_caption_with_buttons(caption, telethon_buttons):
     return caption + links_text if has_links else caption
 
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (بر اساس ارسال موقعیتی آرگومان‌ها)
+# 【بازنویسی نهایی بر اساس ارسال موقعیتی آرگومان‌ها】
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -106,27 +101,22 @@ async def process_event(event, event_type):
                 file_path = await user_client.download_media(message, file="downloads/")
                 print(f"-> دانلود کامل شد: {file_path}")
 
-                # ---【اصلاح تستی: حذف reply_to_message_id از متدهای فایل】---
+                # ---【اصلاح کلیدی: ارسال آرگومان‌ها به صورت موقعیتی】---
                 if message.photo:
                     message_type = "photo"
-                    # reply_to_message_id حذف شد
-                    sent_rubika_message = await rubika_self.send_photo(destination_guid, file_path, caption_with_links)
+                    sent_rubika_message = await rubika_self.send_photo(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
                 elif message.video:
                     message_type = "video"
-                    # reply_to_message_id حذف شد
-                    sent_rubika_message = await rubika_self.send_video(destination_guid, file_path, caption_with_links)
+                    sent_rubika_message = await rubika_self.send_video(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
                 elif message.voice:
                     message_type = "voice"
-                    # reply_to_message_id حذف شد
-                    sent_rubika_message = await rubika_self.send_voice(destination_guid, file_path, caption_with_links)
+                    sent_rubika_message = await rubika_self.send_voice(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
                 elif message.audio or message.document:
                     message_type = "document" if message.document else "audio"
-                    # reply_to_message_id حذف شد
-                    sent_rubika_message = await rubika_self.send_document(destination_guid, file_path, caption_with_links)
+                    sent_rubika_message = await rubika_self.send_document(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
 
             elif message.text and not message.media:
                 message_type = "text"
-                # برای پیام متنی، ریپلای باقی می‌ماند تا مقایسه کنیم
                 sent_rubika_message = await rubika_self.send_message(destination_guid, text=caption_with_links, reply_to_message_id=rubika_reply_to_id)
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
@@ -148,8 +138,7 @@ async def process_event(event, event_type):
             stats["errors"] = stats.get("errors", 0) + 1
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
-    
-    # ... بقیه تابع process_event (بخش edited و deleted) بدون تغییر ...
+
     elif event_type == "edited":
         edited_message = event.message
         telegram_id = str(edited_message.id)
@@ -176,9 +165,7 @@ async def process_event(event, event_type):
             save_data_to_file('message_map.json', message_map)
         except Exception as e: print(f"!! خطا در پردازش حذف پیام: {e}")
 
-# ===============================================================
-# پنل ادمین
-# ===============================================================
+# ... (بقیه فایل، شامل admin_command_handler و main، بدون تغییر است) ...
 async def admin_command_handler(event):
     global stats
     command = event.raw_text.lower()
@@ -202,9 +189,6 @@ async def admin_command_handler(event):
         save_data_to_file('stats.json', stats)
         await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
-# ===============================================================
-# تابع اصلی برنامه (main)
-# ===============================================================
 async def main(event_queue):
     global user_client, bot_client, rubika_self, routing_map, message_map, stats
     pairs = CHANNEL_MAP_STR.split(','); [routing_map.update({int(p.split(':', 1)[0].strip()): p.split(':', 1)[1].strip()}) for p in pairs if ':' in p]
@@ -229,4 +213,3 @@ async def main(event_queue):
     print("کلاینت‌های تلگرام و روبیکا (سلف) با موفقیت آنلاین شدند.")
     await send_admin_notification("✅ ربات فورواردر با موفقیت آنلاین شد. (حالت: سلف‌بات)")
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
-
