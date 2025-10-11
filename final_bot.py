@@ -66,7 +66,7 @@ def format_caption_with_buttons(caption, telethon_buttons):
     return caption + links_text if has_links else caption
 
 # ===============================================================
-# 【بازنویسی نهایی بر اساس مستندات صحیح】: پردازشگر اصلی پیام‌ها
+# 【بازنویسی نهایی بر اساس ارسال موقعیتی آرگومان‌ها】
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -96,31 +96,29 @@ async def process_event(event, event_type):
                 print("-> پیام خالی نادیده گرفته شد.")
                 return
             
-            # ---【منطق جدید و صحیح با متدهای اختصاصی】---
             if message.media and not isinstance(message.media, (types.MessageMediaPoll, types.MessageMediaGeo, types.MessageMediaContact)):
                 print("-> پیام حاوی رسانه است. شروع دانلود...")
                 file_path = await user_client.download_media(message, file="downloads/")
                 print(f"-> دانلود کامل شد: {file_path}")
 
+                # ---【اصلاح کلیدی: ارسال آرگومان‌ها به صورت موقعیتی】---
                 if message.photo:
                     message_type = "photo"
-                    sent_rubika_message = await rubika_self.send_photo(destination_guid, photo=file_path, caption=caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                    sent_rubika_message = await rubika_self.send_photo(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
                 elif message.video:
                     message_type = "video"
-                    sent_rubika_message = await rubika_self.send_video(destination_guid, video=file_path, caption=caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                    sent_rubika_message = await rubika_self.send_video(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
                 elif message.voice:
                     message_type = "voice"
-                    sent_rubika_message = await rubika_self.send_voice(destination_guid, voice=file_path, caption=caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                    sent_rubika_message = await rubika_self.send_voice(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
                 elif message.audio or message.document:
                     message_type = "document" if message.document else "audio"
-                    sent_rubika_message = await rubika_self.send_document(destination_guid, document=file_path, caption=caption_with_links, reply_to_message_id=rubika_reply_to_id)
+                    sent_rubika_message = await rubika_self.send_document(destination_guid, file_path, caption_with_links, reply_to_message_id=rubika_reply_to_id)
 
-            # ---【منطق ارسال متن ساده】---
             elif message.text and not message.media:
                 message_type = "text"
                 sent_rubika_message = await rubika_self.send_message(destination_guid, text=caption_with_links, reply_to_message_id=rubika_reply_to_id)
 
-            # ... (بقیه کد)
             if file_path and os.path.exists(file_path): os.remove(file_path)
 
             if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
