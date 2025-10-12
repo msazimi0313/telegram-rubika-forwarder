@@ -7,9 +7,9 @@ import jdatetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
-from rubpy import Client
+# <---【تغییر】: وارد کردن models از کتابخانه rubpy
+from rubpy import Client, models
 
-# ... (بخش تنظیمات و توابع کمکی بدون تغییر باقی می‌ماند) ...
 # ===============================================================
 # بخش تنظیمات
 # ===============================================================
@@ -27,9 +27,7 @@ except (TypeError, ValueError) as e:
 
 IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
 
-# ===============================================================
-# توابع کمکی
-# ===============================================================
+# ... (توابع کمکی بدون تغییر) ...
 def get_default_stats():
     return {"total_forwarded": 0, "by_type": {}, "errors": 0, "last_activity_time": None}
 
@@ -106,32 +104,27 @@ async def process_event(event, event_type):
                 message_type = "text"
                 sent_rubika_message = await rubika_client.send_message(destination_guid, message.text, reply_to_message_id=rubika_reply_to_id)
             
-            # <---【اصلاح نهایی و کلیدی در این بلوک】--->
+            # <---【اصلاح نهایی: استفاده از کلاس‌های models.Input...】--->
             elif message.photo:
                 message_type = "photo"
                 file_path = await user_client.download_media(message.photo, file="downloads/")
-                with open(file_path, "rb") as f:
-                    sent_rubika_message = await rubika_client.send_photo(destination_guid, photo=f, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_photo(destination_guid, photo=models.InputPhoto(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.video:
                 message_type = "video"
                 file_path = await user_client.download_media(message.video, file="downloads/")
-                with open(file_path, "rb") as f:
-                    sent_rubika_message = await rubika_client.send_video(destination_guid, video=f, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_video(destination_guid, video=models.InputVideo(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.audio:
                 message_type = "audio"
                 file_path = await user_client.download_media(message.audio, file="downloads/")
-                with open(file_path, "rb") as f:
-                    sent_rubika_message = await rubika_client.send_music(destination_guid, music=f, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_music(destination_guid, music=models.InputMusic(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.voice:
                 message_type = "voice"
                 file_path = await user_client.download_media(message.voice, file="downloads/")
-                with open(file_path, "rb") as f:
-                    sent_rubika_message = await rubika_client.send_voice(destination_guid, voice=f, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_voice(destination_guid, voice=models.InputVoice(file_path), reply_to_message_id=rubika_reply_to_id)
             elif message.document:
                 message_type = "document"
                 file_path = await user_client.download_media(message.document, file="downloads/")
-                with open(file_path, "rb") as f:
-                    sent_rubika_message = await rubika_client.send_file(destination_guid, file=f, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_file(destination_guid, file=models.InputFile(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
             if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
@@ -151,7 +144,7 @@ async def process_event(event, event_type):
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
     
-    # ... (بقیه توابع process_event, admin_command_handler و main بدون تغییر باقی می‌مانند) ...
+    # ... (بقیه توابع بدون تغییر) ...
     elif event_type == "edited":
         edited_message = event.message
         print(f"\n[پردازش ویرایش پیام] شناسه: {edited_message.id}")
