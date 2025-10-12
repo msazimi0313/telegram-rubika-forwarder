@@ -9,6 +9,7 @@ from telethon.sessions import StringSession
 from telethon.tl import types
 from rubpy import Client
 
+# ... (بخش تنظیمات و توابع کمکی بدون تغییر باقی می‌ماند) ...
 # ===============================================================
 # بخش تنظیمات
 # ===============================================================
@@ -20,14 +21,15 @@ try:
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
-    # <---【حذف شد】: متغیر RUBIKA_AUTH_CODE دیگر لازم نیست
 except (TypeError, ValueError) as e:
     print(f"خطا: یکی از متغیرهای محیطی تلگرام تنظیم نشده یا فرمت آن اشتباه است: {e}")
     exit()
 
 IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
 
-# ... (بقیه توابع کمکی بدون تغییر باقی می‌مانند) ...
+# ===============================================================
+# توابع کمکی
+# ===============================================================
 def get_default_stats():
     return {"total_forwarded": 0, "by_type": {}, "errors": 0, "last_activity_time": None}
 
@@ -55,7 +57,9 @@ async def send_admin_notification(text):
             except Exception as e:
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
-# ... (تابع process_event و بقیه توابع اصلی بدون تغییر باقی می‌مانند) ...
+# ===============================================================
+# پردازشگر اصلی پیام‌ها (Worker Logic)
+# ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
     if not rubika_client: return
@@ -104,22 +108,27 @@ async def process_event(event, event_type):
             elif message.photo:
                 message_type = "photo"
                 file_path = await user_client.download_media(message.photo, file="downloads/")
-                sent_rubika_message = await rubika_client.send_photo(destination_guid, photo=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                # <---【اصلاح شد】: پارامتر photo به file تغییر کرد
+                sent_rubika_message = await rubika_client.send_photo(destination_guid, file=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.video:
                 message_type = "video"
                 file_path = await user_client.download_media(message.video, file="downloads/")
-                sent_rubika_message = await rubika_client.send_video(destination_guid, video=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                # <---【اصلاح شد】: پارامتر video به file تغییر کرد
+                sent_rubika_message = await rubika_client.send_video(destination_guid, file=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.audio:
                 message_type = "audio"
                 file_path = await user_client.download_media(message.audio, file="downloads/")
-                sent_rubika_message = await rubika_client.send_music(destination_guid, music=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                # <---【اصلاح شد】: پارامتر music به file تغییر کرد
+                sent_rubika_message = await rubika_client.send_music(destination_guid, file=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.voice:
                 message_type = "voice"
                 file_path = await user_client.download_media(message.voice, file="downloads/")
-                sent_rubika_message = await rubika_client.send_voice(destination_guid, voice=file_path, reply_to_message_id=rubika_reply_to_id)
+                # <---【اصلاح شد】: پارامتر voice به file تغییر کرد
+                sent_rubika_message = await rubika_client.send_voice(destination_guid, file=file_path, reply_to_message_id=rubika_reply_to_id)
             elif message.document:
                 message_type = "document"
                 file_path = await user_client.download_media(message.document, file="downloads/")
+                # این مورد از قبل درست بود
                 sent_rubika_message = await rubika_client.send_file(destination_guid, file=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
@@ -140,6 +149,7 @@ async def process_event(event, event_type):
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
     
+    # ... (بقیه توابع process_event, admin_command_handler و main بدون تغییر باقی می‌مانند) ...
     elif event_type == "edited":
         edited_message = event.message
         print(f"\n[پردازش ویرایش پیام] شناسه: {edited_message.id}")
@@ -214,8 +224,6 @@ async def main(event_queue):
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
     
-    # <---【تغییر کلیدی】: استفاده از نام session برای اتصال مستقیم
-    # ربات به دنبال فایلی به نام my_account.session خواهد گشت
     rubika_client = Client("my_account")
     
     await rubika_client.start()
