@@ -84,6 +84,7 @@ async def process_event(event, event_type):
             message_type = "unknown"
             file_path = None
 
+            # ... (بخش پیام‌های متنی بدون تغییر) ...
             if message.media and isinstance(message.media, types.MessageMediaPoll):
                 message_type = "poll (as text)"
                 poll = message.media.poll
@@ -105,31 +106,32 @@ async def process_event(event, event_type):
                 message_type = "text"
                 sent_rubika_message = await rubika_client.send_message(destination_guid, message.text, reply_to_message_id=rubika_reply_to_id)
             
+            # <---【اصلاح نهایی و کلیدی در این بلوک】--->
             elif message.photo:
                 message_type = "photo"
                 file_path = await user_client.download_media(message.photo, file="downloads/")
-                # <---【اصلاح شد】: پارامتر photo به file تغییر کرد
-                sent_rubika_message = await rubika_client.send_photo(destination_guid, file=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                with open(file_path, "rb") as f:
+                    sent_rubika_message = await rubika_client.send_photo(destination_guid, photo=f, caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.video:
                 message_type = "video"
                 file_path = await user_client.download_media(message.video, file="downloads/")
-                # <---【اصلاح شد】: پارامتر video به file تغییر کرد
-                sent_rubika_message = await rubika_client.send_video(destination_guid, file=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                with open(file_path, "rb") as f:
+                    sent_rubika_message = await rubika_client.send_video(destination_guid, video=f, caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.audio:
                 message_type = "audio"
                 file_path = await user_client.download_media(message.audio, file="downloads/")
-                # <---【اصلاح شد】: پارامتر music به file تغییر کرد
-                sent_rubika_message = await rubika_client.send_music(destination_guid, file=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                with open(file_path, "rb") as f:
+                    sent_rubika_message = await rubika_client.send_music(destination_guid, music=f, caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.voice:
                 message_type = "voice"
                 file_path = await user_client.download_media(message.voice, file="downloads/")
-                # <---【اصلاح شد】: پارامتر voice به file تغییر کرد
-                sent_rubika_message = await rubika_client.send_voice(destination_guid, file=file_path, reply_to_message_id=rubika_reply_to_id)
+                with open(file_path, "rb") as f:
+                    sent_rubika_message = await rubika_client.send_voice(destination_guid, voice=f, reply_to_message_id=rubika_reply_to_id)
             elif message.document:
                 message_type = "document"
                 file_path = await user_client.download_media(message.document, file="downloads/")
-                # این مورد از قبل درست بود
-                sent_rubika_message = await rubika_client.send_file(destination_guid, file=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                with open(file_path, "rb") as f:
+                    sent_rubika_message = await rubika_client.send_file(destination_guid, file=f, caption=caption, reply_to_message_id=rubika_reply_to_id)
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
             if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
