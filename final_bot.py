@@ -7,8 +7,8 @@ import jdatetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
-# <---【تغییر】: وارد کردن models از کتابخانه rubpy
-from rubpy import Client, models
+# <---【اصلاح نهایی】: وارد کردن مستقیم کلاس‌های مورد نیاز به جای ماژول models
+from rubpy import Client, InputPhoto, InputVideo, InputMusic, InputVoice, InputFile
 
 # ===============================================================
 # بخش تنظیمات
@@ -104,27 +104,27 @@ async def process_event(event, event_type):
                 message_type = "text"
                 sent_rubika_message = await rubika_client.send_message(destination_guid, message.text, reply_to_message_id=rubika_reply_to_id)
             
-            # <---【اصلاح نهایی: استفاده از کلاس‌های models.Input...】--->
+            # <---【اصلاح نهایی: حذف پیشوند models.】--->
             elif message.photo:
                 message_type = "photo"
                 file_path = await user_client.download_media(message.photo, file="downloads/")
-                sent_rubika_message = await rubika_client.send_photo(destination_guid, photo=models.InputPhoto(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_photo(destination_guid, photo=InputPhoto(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.video:
                 message_type = "video"
                 file_path = await user_client.download_media(message.video, file="downloads/")
-                sent_rubika_message = await rubika_client.send_video(destination_guid, video=models.InputVideo(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_video(destination_guid, video=InputVideo(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.audio:
                 message_type = "audio"
                 file_path = await user_client.download_media(message.audio, file="downloads/")
-                sent_rubika_message = await rubika_client.send_music(destination_guid, music=models.InputMusic(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_music(destination_guid, music=InputMusic(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
             elif message.voice:
                 message_type = "voice"
                 file_path = await user_client.download_media(message.voice, file="downloads/")
-                sent_rubika_message = await rubika_client.send_voice(destination_guid, voice=models.InputVoice(file_path), reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_voice(destination_guid, voice=InputVoice(file_path), reply_to_message_id=rubika_reply_to_id)
             elif message.document:
                 message_type = "document"
                 file_path = await user_client.download_media(message.document, file="downloads/")
-                sent_rubika_message = await rubika_client.send_file(destination_guid, file=models.InputFile(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_file(destination_guid, file=InputFile(file_path), caption=caption, reply_to_message_id=rubika_reply_to_id)
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
             if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
