@@ -214,15 +214,21 @@ async def admin_command_handler(event):
         await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
 # ===============================================================
-# تابع اصلی برنامه (main) - استفاده از Session String
+# تابع اصلی برنامه (main) - استفاده از JSON Session
 # ===============================================================
 async def main(event_queue):
     global user_client, bot_client, rubika_client, routing_map, message_map, stats
     
-    # <---【تغییر】: خواندن متغیر محیطی جدید
-    RUBIKA_SESSION_STRING = os.environ.get("RUBIKA_SESSION_STRING")
-    if not RUBIKA_SESSION_STRING:
-        print("خطا: متغیر محیطی RUBIKA_SESSION_STRING تنظیم نشده است!")
+    RUBIKA_JSON_SESSION = os.environ.get("RUBIKA_JSON_SESSION")
+    if not RUBIKA_JSON_SESSION:
+        print("خطا: متغیر محیطی RUBIKA_JSON_SESSION تنظیم نشده است!")
+        return
+
+    try:
+        # تبدیل رشته JSON به دیکشنری پایتون
+        session_data = json.loads(RUBIKA_JSON_SESSION)
+    except json.JSONDecodeError:
+        print("خطا: محتوای RUBIKA_JSON_SESSION یک JSON معتبر نیست!")
         return
 
     pairs = CHANNEL_MAP_STR.split(','); [routing_map.update({int(p.split(':', 1)[0].strip()): p.split(':', 1)[1].strip()}) for p in pairs if ':' in p]
@@ -235,8 +241,16 @@ async def main(event_queue):
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
     
-    # <---【اصلاح نهایی】: مقداردهی اولیه کلاینت با استفاده از رشته سشن
-    rubika_client = Client(session=RUBIKA_SESSION_STRING)
+    # <---【اصلاح نهایی و قطعی】: ساخت کلاینت با استفاده از اطلاعات دیکشنری
+    # ما تمام پارامترهای لازم را به صورت دستی به سازنده می‌دهیم
+    rubika_client = Client(
+        "render_session", # یک نام دلخواه برای سشن در سرور
+        auth=session_data['auth'],
+        user_guid=session_data['user_guid'],
+        private_key=session_data['private_key'],
+        public_key=session_data['public_key'],
+        session_key=session_data['session_key']
+    )
 
     @user_client.on(events.NewMessage(chats=source_channel_ids))
     async def handler(e): await event_queue.put(("new", e))
@@ -254,7 +268,7 @@ async def main(event_queue):
         await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
         print("کلاینت‌های تلگرام با موفقیت آنلاین شدند.")
         
-        # کلاینت روبیکا با سشن استرینگ دیگر نیازی به start() ندارد و آماده است
+        await rubika_client.start()
         me = await rubika_client.get_me()
         print(f"کلاینت روبیکا با موفقیت به عنوان کاربر '{me.user.first_name}' آنلاین شد.")
         
