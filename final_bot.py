@@ -202,7 +202,7 @@ async def admin_command_handler(event):
         await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
 # ===============================================================
-# تابع اصلی برنامه (نسخه نهایی با بازسازی فایل)
+# تابع اصلی برنامه (نسخه نهایی و کاملاً عملیاتی)
 # ===============================================================
 async def main(event_queue):
     global user_client, bot_client, rubika_client, routing_map, message_map, stats
@@ -212,11 +212,8 @@ async def main(event_queue):
         return
 
     try:
-        # <---【مرحله ۱: بازسازی فایل سشن】--->
         print(f"در حال بازسازی فایل سشن روبیکا در '{RUBIKA_SESSION_FILENAME}'...")
-        # رشته Base64 را به داده باینری دیکود می‌کنیم
         session_binary_data = base64.b64decode(RUBIKA_SESSION_FILE_B64)
-        # داده باینری را در یک فایل جدید می‌نویسیم
         with open(RUBIKA_SESSION_FILENAME, 'wb') as f:
             f.write(session_binary_data)
         print("فایل سشن با موفقیت بازسازی شد.")
@@ -233,7 +230,6 @@ async def main(event_queue):
     print("در حال اتصال کلاینت‌ها...")
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
-    # <---【مرحله ۲: استفاده از فایل بازسازی شده】--->
     rubika_client = Client(RUBIKA_SESSION_FILENAME)
 
     @user_client.on(events.NewMessage(chats=source_channel_ids))
@@ -264,8 +260,10 @@ async def main(event_queue):
         await send_admin_notification(f"❌ **خطا در راه‌اندازی ربات** ❌\n\n{error_message}")
         return
 
+    # <---【اصلاح نهایی】: خط مربوط به روبیکا حذف شد
+    # کلاینت روبیکا در پس‌زمینه فعال می‌ماند. ما فقط منتظر کلاینت‌های تلگرام می‌مانیم.
+    print("ربات در حال اجراست و منتظر رویدادها می‌باشد...")
     await asyncio.gather(
         user_client.run_until_disconnected(),
-        bot_client.run_until_disconnected(),
-        rubika_client.run_until_disconnected()
+        bot_client.run_until_disconnected()
     )
