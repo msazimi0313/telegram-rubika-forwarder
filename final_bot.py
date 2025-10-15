@@ -214,7 +214,7 @@ async def admin_command_handler(event):
         await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
 # ===============================================================
-# تابع اصلی برنامه (main) - نسخه نهایی و اصلاح شده
+# تابع اصلی برنامه (main) - نسخه نهایی و اصلاح شده v2
 # ===============================================================
 async def main(event_queue):
     global user_client, bot_client, rubika_client, routing_map, message_map, stats
@@ -229,7 +229,7 @@ async def main(event_queue):
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
     
-    # <---【تغییر نهایی و صحیح】: هم نام سشن و هم کلید احراز هویت را ارسال می‌کنیم
+    # مقداردهی اولیه کلاینت با نام سشن و کلید احراز هویت
     rubika_client = Client("rubika_self_session", auth=RUBIKA_AUTH_KEY)
 
     @user_client.on(events.NewMessage(chats=source_channel_ids))
@@ -242,18 +242,32 @@ async def main(event_queue):
     async def handler(e): await admin_command_handler(e)
 
     print("ربات آماده به کار است...")
-    await user_client.start(); await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
     
-    # برای اطمینان از اتصال موفق، اطلاعات کاربر را دریافت می‌کنیم
+    # <---【اصلاح کلیدی】: فراخوانی start() برای همه کلاینت‌ها ضروری است
     try:
+        # ابتدا کلاینت‌های تلگرام را استارت می‌زنیم
+        await user_client.start()
+        await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
+        print("کلاینت‌های تلگرام با موفقیت آنلاین شدند.")
+        
+        # سپس کلاینت روبیکا را استارت می‌زنیم
+        await rubika_client.start()
+        
+        # و در نهایت اتصال آن را با get_me() تایید می‌کنیم
         me = await rubika_client.get_me()
         print(f"کلاینت روبیکا با موفقیت به عنوان کاربر '{me.user.first_name}' آنلاین شد.")
+        
         await send_admin_notification("✅ ربات فورواردر (حالت سلف) با موفقیت آنلاین شد و آماده دریافت پیام است.")
-    except Exception as e:
-        print(f"!! خطا در اتصال به روبیکا: {e}")
-        await send_admin_notification(f"❌ **خطا در اتصال به روبیکا** ❌\n\nربات نتوانست با کلید احراز هویت ارائه شده به روبیکا متصل شود. لطفاً کلید را بررسی کنید.\n\n`{e}`")
-        return
 
-    print("کلاینت‌های تلگرام با موفقیت آنلاین شدند.")
-    
-    await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
+    except Exception as e:
+        error_message = f"!! خطا در فرآیند راه‌اندازی اولیه: {e}"
+        print(error_message)
+        await send_admin_notification(f"❌ **خطا در راه‌اندازی ربات** ❌\n\n{error_message}")
+        return # در صورت بروز خطا در هر مرحله از استارت‌آپ، برنامه متوقف می‌شود
+
+    # اجرای پایدار ربات تا زمانی که متوقف شود
+    await asyncio.gather(
+        user_client.run_until_disconnected(),
+        bot_client.run_until_disconnected(),
+        rubika_client.run_until_disconnected() # <---【افزوده شد】
+    )
