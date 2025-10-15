@@ -228,9 +228,12 @@ async def main(event_queue):
     print("در حال اتصال کلاینت‌ها...")
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
-    # <---【تغییر】: ساخت کلاینت سلف روبیکا
-    rubika_client = Client(RUBIKA_AUTH_KEY)
-    await rubika_client.start()
+    
+    # <---【تغییر کلیدی】: کلید احراز هویت را مستقیماً به کلاینت می‌دهیم
+    # این کار از لاگین تعاملی (پرسیدن شماره تلفن) روی سرور جلوگیری می‌کند.
+    print("در حال ساخت کلاینت روبیکا با کلید احراز هویت...")
+    rubika_client = Client(auth=RUBIKA_AUTH_KEY)
+    # دیگر نیازی به await rubika_client.start() نیست، چون اتصال با auth برقرار می‌شود.
 
     @user_client.on(events.NewMessage(chats=source_channel_ids))
     async def handler(e): await event_queue.put(("new", e))
@@ -242,9 +245,18 @@ async def main(event_queue):
     async def handler(e): await admin_command_handler(e)
 
     print("ربات آماده به کار است...")
+    # <---【تغییر】: کلاینت روبیکا دیگر نیاز به start() جداگانه ندارد
     await user_client.start(); await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
-    print("کلاینت‌های تلگرام و روبیکا با موفقیت آنلاین شدند.")
     
+    # برای اطمینان از اتصال موفق، اطلاعات کاربر را دریافت می‌کنیم
+    try:
+        me = await rubika_client.get_me()
+        print(f"کلاینت روبیکا با موفقیت به عنوان کاربر '{me.user.first_name}' آنلاین شد.")
+    except Exception as e:
+        print(f"!! خطا در اتصال به روبیکا: {e}")
+        await send_admin_notification(f"❌ **خطا در اتصال به روبیکا** ❌\n\nربات نتوانست با کلید احراز هویت ارائه شده به روبیکا متصل شود. لطفاً کلید را بررسی کنید.\n\n`{e}`")
+        return # در صورت خطا، از ادامه کار جلوگیری می‌کنیم
+
     await send_admin_notification("✅ ربات فورواردر (حالت سلف) با موفقیت آنلاین شد و آماده دریافت پیام است.")
     
     await asyncio.gather(user_client.run_until_disconnected(), bot_client.run_until_disconnected())
