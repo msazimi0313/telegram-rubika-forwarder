@@ -4,5 +4,6 @@ gunicorn
 jdatetime
 nest_asyncio
 pytz
-rubpy==7.0.0  # <---【تغییر به نسخه 7.0.0】
+rubpy
 Telethon
+
