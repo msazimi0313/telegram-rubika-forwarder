@@ -214,11 +214,17 @@ async def admin_command_handler(event):
         await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
 # ===============================================================
-# تابع اصلی برنامه (main) - نسخه نهایی و اصلاح شده v2
+# تابع اصلی برنامه (main) - استفاده از Session String
 # ===============================================================
 async def main(event_queue):
     global user_client, bot_client, rubika_client, routing_map, message_map, stats
     
+    # <---【تغییر】: خواندن متغیر محیطی جدید
+    RUBIKA_SESSION_STRING = os.environ.get("RUBIKA_SESSION_STRING")
+    if not RUBIKA_SESSION_STRING:
+        print("خطا: متغیر محیطی RUBIKA_SESSION_STRING تنظیم نشده است!")
+        return
+
     pairs = CHANNEL_MAP_STR.split(','); [routing_map.update({int(p.split(':', 1)[0].strip()): p.split(':', 1)[1].strip()}) for p in pairs if ':' in p]
     source_channel_ids = list(routing_map.keys())
     
@@ -229,8 +235,8 @@ async def main(event_queue):
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
     
-    # مقداردهی اولیه کلاینت با نام سشن و کلید احراز هویت
-    rubika_client = Client("rubika_self_session", auth=RUBIKA_AUTH_KEY)
+    # <---【اصلاح نهایی】: مقداردهی اولیه کلاینت با استفاده از رشته سشن
+    rubika_client = Client(session=RUBIKA_SESSION_STRING)
 
     @user_client.on(events.NewMessage(chats=source_channel_ids))
     async def handler(e): await event_queue.put(("new", e))
@@ -243,17 +249,12 @@ async def main(event_queue):
 
     print("ربات آماده به کار است...")
     
-    # <---【اصلاح کلیدی】: فراخوانی start() برای همه کلاینت‌ها ضروری است
     try:
-        # ابتدا کلاینت‌های تلگرام را استارت می‌زنیم
         await user_client.start()
         await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
         print("کلاینت‌های تلگرام با موفقیت آنلاین شدند.")
         
-        # سپس کلاینت روبیکا را استارت می‌زنیم
-        await rubika_client.start()
-        
-        # و در نهایت اتصال آن را با get_me() تایید می‌کنیم
+        # کلاینت روبیکا با سشن استرینگ دیگر نیازی به start() ندارد و آماده است
         me = await rubika_client.get_me()
         print(f"کلاینت روبیکا با موفقیت به عنوان کاربر '{me.user.first_name}' آنلاین شد.")
         
@@ -263,11 +264,10 @@ async def main(event_queue):
         error_message = f"!! خطا در فرآیند راه‌اندازی اولیه: {e}"
         print(error_message)
         await send_admin_notification(f"❌ **خطا در راه‌اندازی ربات** ❌\n\n{error_message}")
-        return # در صورت بروز خطا در هر مرحله از استارت‌آپ، برنامه متوقف می‌شود
+        return
 
-    # اجرای پایدار ربات تا زمانی که متوقف شود
     await asyncio.gather(
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected(),
-        rubika_client.run_until_disconnected() # <---【افزوده شد】
+        rubika_client.run_until_disconnected()
     )
