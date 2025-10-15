@@ -6,8 +6,8 @@ import pytz
 import jdatetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl import types as telethon_types
-from rubpy import Client
+from telethon.tl import types
+from rubpy import Client # <---【تغییر】: ایمپورت Client به جای BotClient
 
 # ===============================================================
 # بخش تنظیمات
@@ -20,13 +20,17 @@ try:
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
+    # <---【تغییر】: استفاده از کلید احراز هویت سلف به جای توکن ربات
+    RUBIKA_AUTH_KEY = os.environ.get("RUBIKA_AUTH_KEY") 
 except (TypeError, ValueError) as e:
-    print(f"خطا: یکی از متغیرهای محیطی تلگرام تنظیم نشده یا فرمت آن اشتباه است: {e}")
+    print(f"خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است: {e}")
     exit()
 
 IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
 
-# ... (توابع کمکی بدون تغییر) ...
+# ===============================================================
+# توابع کمکی
+# ===============================================================
 def get_default_stats():
     return {"total_forwarded": 0, "by_type": {}, "errors": 0, "last_activity_time": None}
 
@@ -41,7 +45,7 @@ def save_data_to_file(filename, data):
 
 user_client: TelegramClient | None = None
 bot_client: TelegramClient | None = None
-rubika_client: Client | None = None
+rubika_client: Client | None = None # <---【تغییر】: تغییر نام متغیر
 routing_map = {}
 message_map = {}
 stats = {}
@@ -54,6 +58,8 @@ async def send_admin_notification(text):
             except Exception as e:
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
+# <---【حذف شد】: تابع create_rubika_keypad چون سلف‌بات از آن پشتیبانی نمی‌کند.
+
 # ===============================================================
 # پردازشگر اصلی پیام‌ها (Worker Logic)
 # ===============================================================
@@ -64,7 +70,7 @@ async def process_event(event, event_type):
     if event_type == "new":
         message = event.message
         source_id = message.chat_id
-        destination_guid = routing_map.get(source_id)
+        destination_guid = routing_map.get(source_id) # <---【تغییر】: تغییر نام برای وضوح بیشتر
         if not destination_guid: return
 
         print(f"\n[پردازش پیام جدید] از {source_id} به {destination_guid}")
@@ -81,55 +87,61 @@ async def process_event(event, event_type):
             message_type = "unknown"
             file_path = None
 
-            if message.media and isinstance(message.media, telethon_types.MessageMediaPoll):
-                message_type = "poll (as text)"
-                poll = message.media.poll
-                question = poll.question
-                options = "\n".join([f"- {answer.text}" for answer in poll.answers])
-                poll_text = f"📊 نظرسنجی: {question}\n\n{options}"
-                sent_rubika_message = await rubika_client.send_message(destination_guid, poll_text, reply_to_message_id=rubika_reply_to_id)
+            if message.media and isinstance(message.media, types.MessageMediaPoll):
+                # سلف‌بات روبیکا از ارسال نظرسنجی پشتیبانی نمی‌کند.
+                print("-> هشدار: سلف‌بات روبیکا از ارسال نظرسنجی پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
+                return # از ادامه پردازش این پیام صرف نظر می‌کنیم
+            
             elif message.geo:
-                message_type = "location"
-                geo = message.geo
-                location_text = f"📍 موقعیت مکانی:\nLat: {geo.lat}, Long: {geo.long}"
-                sent_rubika_message = await rubika_client.send_message(destination_guid, location_text, reply_to_message_id=rubika_reply_to_id)
+                # سلف‌بات روبیکا از ارسال لوکیشن پشتیبانی نمی‌کند.
+                print("-> هشدار: سلف‌بات روبیکا از ارسال لوکیشن پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
+                return
+
             elif message.contact:
-                message_type = "contact"
-                contact = message.contact
-                contact_text = f"👤 مخاطب:\nنام: {contact.first_name} {contact.last_name or ''}\nشماره: {contact.phone_number}"
-                sent_rubika_message = await rubika_client.send_message(destination_guid, contact_text, reply_to_message_id=rubika_reply_to_id)
+                # سلف‌بات روبیکا از ارسال مخاطب پشتیبانی نمی‌کند.
+                print("-> هشدار: سلف‌بات روبیکا از ارسال مخاطب پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
+                return
+
             elif message.text and not message.media:
                 message_type = "text"
-                sent_rubika_message = await rubika_client.send_message(destination_guid, message.text, reply_to_message_id=rubika_reply_to_id)
+                # <---【تغییر】: استفاده از متد جدید ارسال پیام
+                sent_rubika_message = await rubika_client.send_message(object_guid=destination_guid, message=message.text, reply_to_message_id=rubika_reply_to_id)
             
-            # <---【اصلاح نهایی: بازگشت به ساده‌ترین حالت ممکن】--->
             elif message.photo:
                 message_type = "photo"
                 file_path = await user_client.download_media(message.photo, file="downloads/")
-                sent_rubika_message = await rubika_client.send_photo(destination_guid, photo=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                # <---【تغییر】: استفاده از متد جدید ارسال فایل
+                sent_rubika_message = await rubika_client.send_file(object_guid=destination_guid, file=file_path, caption=caption, file_type='Image', reply_to_message_id=rubika_reply_to_id)
+            
             elif message.video:
                 message_type = "video"
                 file_path = await user_client.download_media(message.video, file="downloads/")
-                sent_rubika_message = await rubika_client.send_video(destination_guid, video=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_file(object_guid=destination_guid, file=file_path, caption=caption, file_type='Video', reply_to_message_id=rubika_reply_to_id)
+            
             elif message.audio:
                 message_type = "audio"
                 file_path = await user_client.download_media(message.audio, file="downloads/")
-                sent_rubika_message = await rubika_client.send_music(destination_guid, music=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_file(object_guid=destination_guid, file=file_path, caption=caption, file_type='Music', reply_to_message_id=rubika_reply_to_id)
+            
             elif message.voice:
                 message_type = "voice"
                 file_path = await user_client.download_media(message.voice, file="downloads/")
-                sent_rubika_message = await rubika_client.send_voice(destination_guid, voice=file_path, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_file(object_guid=destination_guid, file=file_path, file_type='Voice', reply_to_message_id=rubika_reply_to_id)
+            
             elif message.document:
                 message_type = "document"
                 file_path = await user_client.download_media(message.document, file="downloads/")
-                sent_rubika_message = await rubika_client.send_file(destination_guid, file=file_path, caption=caption, reply_to_message_id=rubika_reply_to_id)
+                sent_rubika_message = await rubika_client.send_file(object_guid=destination_guid, file=file_path, caption=caption, file_type='File', reply_to_message_id=rubika_reply_to_id)
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
-            if sent_rubika_message and hasattr(sent_rubika_message, 'message_id'):
+            
+            # <---【تغییر】: ساختار پاسخ در سلف متفاوت است
+            if sent_rubika_message and 'message_update' in sent_rubika_message:
+                rubika_msg_id = sent_rubika_message['message_update']['message_id']
                 telegram_id = str(message.id)
-                rubika_id = sent_rubika_message.message_id
-                message_map[telegram_id] = {"rubika_id": rubika_id, "destination_id": destination_guid}
+                message_map[telegram_id] = {"rubika_id": rubika_msg_id, "destination_guid": destination_guid}
                 save_data_to_file('message_map.json', message_map)
+                
                 stats["by_type"].setdefault(message_type, 0); stats["by_type"][message_type] += 1
                 stats["total_forwarded"] = stats.get("total_forwarded", 0) + 1
                 stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
@@ -142,7 +154,6 @@ async def process_event(event, event_type):
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
     
-    # ... (بقیه توابع بدون تغییر) ...
     elif event_type == "edited":
         edited_message = event.message
         print(f"\n[پردازش ویرایش پیام] شناسه: {edited_message.id}")
@@ -150,29 +161,30 @@ async def process_event(event, event_type):
         mapping = message_map.get(telegram_id)
         if mapping:
             rubika_id = mapping["rubika_id"]
-            destination_guid = mapping["destination_id"]
+            destination_guid = mapping["destination_guid"]
             new_content = edited_message.text or ""
-            await rubika_client.edit_message(destination_guid, rubika_id, new_content)
+            # <---【تغییر】: استفاده از متد جدید ویرایش پیام
+            await rubika_client.edit_message(object_guid=destination_guid, message_id=rubika_id, text=new_content)
             print(f"-> پیام ({rubika_id}) در روبیکا ({destination_guid}) ویرایش شد.")
     
     elif event_type == "deleted":
         print(f"\n[پردازش حذف پیام] شناسه‌ها: {event.deleted_ids}")
         try:
-            to_delete_in_rubika = {}
+            guids_to_messages = {}
             for deleted_id in event.deleted_ids:
                 telegram_id = str(deleted_id)
                 if telegram_id in message_map:
-                    mapping = message_map[telegram_id]
+                    mapping = message_map.pop(telegram_id) # حذف از مپ
                     rubika_id = mapping["rubika_id"]
-                    destination_guid = mapping["destination_id"]
-                    if destination_guid not in to_delete_in_rubika:
-                        to_delete_in_rubika[destination_guid] = []
-                    to_delete_in_rubika[destination_guid].append(rubika_id)
-                    del message_map[telegram_id]
+                    destination_guid = mapping["destination_guid"]
+                    if destination_guid not in guids_to_messages:
+                        guids_to_messages[destination_guid] = []
+                    guids_to_messages[destination_guid].append(rubika_id)
             
-            for guid, msg_ids in to_delete_in_rubika.items():
-                await rubika_client.delete_messages(guid, msg_ids)
-                print(f"-> تعداد {len(msg_ids)} پیام در روبیکا ({guid}) حذف شدند.")
+            # <---【تغییر】: استفاده از متد جدید حذف پیام (به صورت گروهی)
+            for guid, msg_ids in guids_to_messages.items():
+                await rubika_client.delete_messages(object_guid=guid, message_ids=msg_ids)
+                print(f"-> پیام‌های {msg_ids} در روبیکا ({guid}) حذف شدند.")
 
             save_data_to_file('message_map.json', message_map)
         except Exception as e:
@@ -216,9 +228,8 @@ async def main(event_queue):
     print("در حال اتصال کلاینت‌ها...")
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
-    
-    rubika_client = Client("my_account")
-    
+    # <---【تغییر】: ساخت کلاینت سلف روبیکا
+    rubika_client = Client(RUBIKA_AUTH_KEY)
     await rubika_client.start()
 
     @user_client.on(events.NewMessage(chats=source_channel_ids))
@@ -232,10 +243,7 @@ async def main(event_queue):
 
     print("ربات آماده به کار است...")
     await user_client.start(); await bot_client.start(bot_token=TELEGRAM_BOT_TOKEN)
-    print("کلاینت‌های تلگرام با موفقیت آنلاین شدند.")
-    
-    me = await rubika_client.get_me()
-    print(f"کلاینت روبیکا با موفقیت به عنوان {me.first_name} آنلاین شد.")
+    print("کلاینت‌های تلگرام و روبیکا با موفقیت آنلاین شدند.")
     
     await send_admin_notification("✅ ربات فورواردر (حالت سلف) با موفقیت آنلاین شد و آماده دریافت پیام است.")
     
