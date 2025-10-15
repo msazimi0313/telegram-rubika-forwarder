@@ -6,6 +6,3 @@ nest_asyncio
 pytz
 rubpy
 Telethon
-pycryptodome
-Pillow
-numpy
