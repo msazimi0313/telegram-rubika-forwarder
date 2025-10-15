@@ -1,13 +1,14 @@
 import asyncio
 import os
 import json
+import base64 # <--- افزوده شد
 from datetime import datetime
 import pytz
 import jdatetime
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
-from rubpy import Client # <---【تغییر】: ایمپورت Client به جای BotClient
+from rubpy import Client
 
 # ===============================================================
 # بخش تنظیمات
@@ -20,16 +21,18 @@ try:
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
-    # <---【تغییر】: استفاده از کلید احراز هویت سلف به جای توکن ربات
-    RUBIKA_AUTH_KEY = os.environ.get("RUBIKA_AUTH_KEY") 
+    # <---【تغییر نهایی】: خواندن متغیر جدید
+    RUBIKA_SESSION_FILE_B64 = os.environ.get("RUBIKA_SESSION_FILE_B64")
 except (TypeError, ValueError) as e:
     print(f"خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است: {e}")
     exit()
 
 IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
+# <---【تغییر نهایی】: نام فایل سشن که در سرور ساخته خواهد شد
+RUBIKA_SESSION_FILENAME = "rubika_session.rp"
 
 # ===============================================================
-# توابع کمکی
+# توابع کمکی (بدون تغییر)
 # ===============================================================
 def get_default_stats():
     return {"total_forwarded": 0, "by_type": {}, "errors": 0, "last_activity_time": None}
@@ -45,7 +48,7 @@ def save_data_to_file(filename, data):
 
 user_client: TelegramClient | None = None
 bot_client: TelegramClient | None = None
-rubika_client: Client | None = None # <---【تغییر】: تغییر نام متغیر
+rubika_client: Client | None = None
 routing_map = {}
 message_map = {}
 stats = {}
@@ -58,10 +61,8 @@ async def send_admin_notification(text):
             except Exception as e:
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
-# <---【حذف شد】: تابع create_rubika_keypad چون سلف‌بات از آن پشتیبانی نمی‌کند.
-
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (Worker Logic)
+# پردازشگر اصلی پیام‌ها (بدون تغییر)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -70,7 +71,7 @@ async def process_event(event, event_type):
     if event_type == "new":
         message = event.message
         source_id = message.chat_id
-        destination_guid = routing_map.get(source_id) # <---【تغییر】: تغییر نام برای وضوح بیشتر
+        destination_guid = routing_map.get(source_id)
         if not destination_guid: return
 
         print(f"\n[پردازش پیام جدید] از {source_id} به {destination_guid}")
@@ -88,46 +89,33 @@ async def process_event(event, event_type):
             file_path = None
 
             if message.media and isinstance(message.media, types.MessageMediaPoll):
-                # سلف‌بات روبیکا از ارسال نظرسنجی پشتیبانی نمی‌کند.
                 print("-> هشدار: سلف‌بات روبیکا از ارسال نظرسنجی پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
-                return # از ادامه پردازش این پیام صرف نظر می‌کنیم
-            
+                return
             elif message.geo:
-                # سلف‌بات روبیکا از ارسال لوکیشن پشتیبانی نمی‌کند.
                 print("-> هشدار: سلف‌بات روبیکا از ارسال لوکیشن پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
                 return
-
             elif message.contact:
-                # سلف‌بات روبیکا از ارسال مخاطب پشتیبانی نمی‌کند.
                 print("-> هشدار: سلف‌بات روبیکا از ارسال مخاطب پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
                 return
-
             elif message.text and not message.media:
                 message_type = "text"
-                # <---【تغییر】: استفاده از متد جدید ارسال پیام
                 sent_rubika_message = await rubika_client.send_message(object_guid=destination_guid, message=message.text, reply_to_message_id=rubika_reply_to_id)
-            
             elif message.photo:
                 message_type = "photo"
                 file_path = await user_client.download_media(message.photo, file="downloads/")
-                # <---【تغییر】: استفاده از متد جدید ارسال فایل
                 sent_rubika_message = await rubika_client.send_file(object_guid=destination_guid, file=file_path, caption=caption, file_type='Image', reply_to_message_id=rubika_reply_to_id)
-            
             elif message.video:
                 message_type = "video"
                 file_path = await user_client.download_media(message.video, file="downloads/")
                 sent_rubika_message = await rubika_client.send_file(object_guid=destination_guid, file=file_path, caption=caption, file_type='Video', reply_to_message_id=rubika_reply_to_id)
-            
             elif message.audio:
                 message_type = "audio"
                 file_path = await user_client.download_media(message.audio, file="downloads/")
                 sent_rubika_message = await rubika_client.send_file(object_guid=destination_guid, file=file_path, caption=caption, file_type='Music', reply_to_message_id=rubika_reply_to_id)
-            
             elif message.voice:
                 message_type = "voice"
                 file_path = await user_client.download_media(message.voice, file="downloads/")
                 sent_rubika_message = await rubika_client.send_file(object_guid=destination_guid, file=file_path, file_type='Voice', reply_to_message_id=rubika_reply_to_id)
-            
             elif message.document:
                 message_type = "document"
                 file_path = await user_client.download_media(message.document, file="downloads/")
@@ -135,7 +123,6 @@ async def process_event(event, event_type):
 
             if file_path and os.path.exists(file_path): os.remove(file_path)
             
-            # <---【تغییر】: ساختار پاسخ در سلف متفاوت است
             if sent_rubika_message and 'message_update' in sent_rubika_message:
                 rubika_msg_id = sent_rubika_message['message_update']['message_id']
                 telegram_id = str(message.id)
@@ -163,7 +150,6 @@ async def process_event(event, event_type):
             rubika_id = mapping["rubika_id"]
             destination_guid = mapping["destination_guid"]
             new_content = edited_message.text or ""
-            # <---【تغییر】: استفاده از متد جدید ویرایش پیام
             await rubika_client.edit_message(object_guid=destination_guid, message_id=rubika_id, text=new_content)
             print(f"-> پیام ({rubika_id}) در روبیکا ({destination_guid}) ویرایش شد.")
     
@@ -174,14 +160,13 @@ async def process_event(event, event_type):
             for deleted_id in event.deleted_ids:
                 telegram_id = str(deleted_id)
                 if telegram_id in message_map:
-                    mapping = message_map.pop(telegram_id) # حذف از مپ
+                    mapping = message_map.pop(telegram_id)
                     rubika_id = mapping["rubika_id"]
                     destination_guid = mapping["destination_guid"]
                     if destination_guid not in guids_to_messages:
                         guids_to_messages[destination_guid] = []
                     guids_to_messages[destination_guid].append(rubika_id)
             
-            # <---【تغییر】: استفاده از متد جدید حذف پیام (به صورت گروهی)
             for guid, msg_ids in guids_to_messages.items():
                 await rubika_client.delete_messages(object_guid=guid, message_ids=msg_ids)
                 print(f"-> پیام‌های {msg_ids} در روبیکا ({guid}) حذف شدند.")
@@ -190,6 +175,9 @@ async def process_event(event, event_type):
         except Exception as e:
             print(f"!! خطا در پردازش حذف پیام: {e}")
 
+# ===============================================================
+# پنل ادمین (بدون تغییر)
+# ===============================================================
 async def admin_command_handler(event):
     global stats
     command = event.raw_text.lower()
@@ -214,21 +202,26 @@ async def admin_command_handler(event):
         await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
 # ===============================================================
-# تابع اصلی برنامه (main) - استفاده از JSON Session
+# تابع اصلی برنامه (نسخه نهایی با بازسازی فایل)
 # ===============================================================
 async def main(event_queue):
     global user_client, bot_client, rubika_client, routing_map, message_map, stats
     
-    RUBIKA_JSON_SESSION = os.environ.get("RUBIKA_JSON_SESSION")
-    if not RUBIKA_JSON_SESSION:
-        print("خطا: متغیر محیطی RUBIKA_JSON_SESSION تنظیم نشده است!")
+    if not RUBIKA_SESSION_FILE_B64:
+        print("!! خطا: متغیر محیطی RUBIKA_SESSION_FILE_B64 تنظیم نشده است!")
         return
 
     try:
-        # تبدیل رشته JSON به دیکشنری پایتون
-        session_data = json.loads(RUBIKA_JSON_SESSION)
-    except json.JSONDecodeError:
-        print("خطا: محتوای RUBIKA_JSON_SESSION یک JSON معتبر نیست!")
+        # <---【مرحله ۱: بازسازی فایل سشن】--->
+        print(f"در حال بازسازی فایل سشن روبیکا در '{RUBIKA_SESSION_FILENAME}'...")
+        # رشته Base64 را به داده باینری دیکود می‌کنیم
+        session_binary_data = base64.b64decode(RUBIKA_SESSION_FILE_B64)
+        # داده باینری را در یک فایل جدید می‌نویسیم
+        with open(RUBIKA_SESSION_FILENAME, 'wb') as f:
+            f.write(session_binary_data)
+        print("فایل سشن با موفقیت بازسازی شد.")
+    except Exception as e:
+        print(f"!! خطا در بازسازی فایل سشن روبیکا: {e}")
         return
 
     pairs = CHANNEL_MAP_STR.split(','); [routing_map.update({int(p.split(':', 1)[0].strip()): p.split(':', 1)[1].strip()}) for p in pairs if ':' in p]
@@ -240,17 +233,8 @@ async def main(event_queue):
     print("در حال اتصال کلاینت‌ها...")
     user_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     bot_client = TelegramClient('bot_session', API_ID, API_HASH)
-    
-    # <---【اصلاح نهایی و قطعی】: ساخت کلاینت با استفاده از اطلاعات دیکشنری
-    # ما تمام پارامترهای لازم را به صورت دستی به سازنده می‌دهیم
-    rubika_client = Client(
-        "render_session", # یک نام دلخواه برای سشن در سرور
-        auth=session_data['auth'],
-        user_guid=session_data['user_guid'],
-        private_key=session_data['private_key'],
-        public_key=session_data['public_key'],
-        session_key=session_data['session_key']
-    )
+    # <---【مرحله ۲: استفاده از فایل بازسازی شده】--->
+    rubika_client = Client(RUBIKA_SESSION_FILENAME)
 
     @user_client.on(events.NewMessage(chats=source_channel_ids))
     async def handler(e): await event_queue.put(("new", e))
