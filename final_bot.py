@@ -62,7 +62,7 @@ async def send_admin_notification(text):
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (نسخه نهایی با متدهای اختصاصی فایل)
+# پردازشگر اصلی پیام‌ها (نسخه نهایی با نام پارامترهای صحیح)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -94,31 +94,32 @@ async def process_event(event, event_type):
                 print(f"-> هشدار: سلف‌بات روبیکا از ارسال '{unsupported_type}' پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
                 return
 
-            # <---【اصلاح نهایی و قطعی: استفاده از متدهای اختصاصی برای هر فایل】--->
             if message.photo:
                 message_type = "photo"
                 file_path = await user_client.download_media(message.photo, file="downloads/")
-                sent_rubika_message = await rubika_client.send_photo(object_guid=destination_guid, photo=file_path, text=caption_or_text, **kwargs)
+                # <---【اصلاح نهایی】: پارامتر صحیح 'caption' است
+                sent_rubika_message = await rubika_client.send_photo(object_guid=destination_guid, photo=file_path, caption=caption_or_text, **kwargs)
             
             elif message.video:
                 message_type = "video"
                 file_path = await user_client.download_media(message.video, file="downloads/")
-                sent_rubika_message = await rubika_client.send_video(object_guid=destination_guid, video=file_path, text=caption_or_text, **kwargs)
+                sent_rubika_message = await rubika_client.send_video(object_guid=destination_guid, video=file_path, caption=caption_or_text, **kwargs)
 
             elif message.audio:
                 message_type = "audio"
                 file_path = await user_client.download_media(message.audio, file="downloads/")
-                sent_rubika_message = await rubika_client.send_audio(object_guid=destination_guid, audio=file_path, text=caption_or_text, **kwargs)
+                sent_rubika_message = await rubika_client.send_audio(object_guid=destination_guid, audio=file_path, caption=caption_or_text, **kwargs)
 
             elif message.voice:
                 message_type = "voice"
                 file_path = await user_client.download_media(message.voice, file="downloads/")
+                # <---【اصلاح نهایی】: ویس کپشن ندارد
                 sent_rubika_message = await rubika_client.send_voice(object_guid=destination_guid, voice=file_path, **kwargs)
 
             elif message.document:
                 message_type = "document"
                 file_path = await user_client.download_media(message.document, file="downloads/")
-                sent_rubika_message = await rubika_client.send_document(object_guid=destination_guid, document=file_path, text=caption_or_text, **kwargs)
+                sent_rubika_message = await rubika_client.send_document(object_guid=destination_guid, document=file_path, caption=caption_or_text, **kwargs)
 
             elif message.text:
                 message_type = "text"
@@ -278,6 +279,7 @@ async def main(event_queue):
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
+
 
 
 
