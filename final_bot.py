@@ -62,7 +62,7 @@ async def send_admin_notification(text):
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (مدیریت هوشمندتر پاسخ)
+# پردازشگر اصلی پیام‌ها (نسخه نهایی با خواندن صحیح پاسخ)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -118,9 +118,9 @@ async def process_event(event, event_type):
                 os.remove(file_path)
                 print(f"فایل موقت حذف شد: {file_path}")
             
-            # <---【اصلاح کلیدی】: بررسی دقیق پاسخ دریافتی
-            if isinstance(sent_rubika_message, dict) and 'message_update' in sent_rubika_message:
-                rubika_msg_id = sent_rubika_message['message_update']['message_id']
+            # <---【اصلاح کلیدی و نهایی】: دسترسی به message_id از طریق آبجکت پاسخ
+            if hasattr(sent_rubika_message, 'message_update') and hasattr(sent_rubika_message.message_update, 'message') and hasattr(sent_rubika_message.message_update.message, 'message_id'):
+                rubika_msg_id = sent_rubika_message.message_update.message.message_id
                 telegram_id = str(message.id)
                 message_map[telegram_id] = {"rubika_id": rubika_msg_id, "destination_guid": destination_guid}
                 save_data_to_file('message_map.json', message_map)
@@ -130,7 +130,7 @@ async def process_event(event, event_type):
                 stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
                 save_data_to_file('stats.json', stats)
                 print(f"-> پیام از نوع '{message_type}' با موفقیت ارسال و مپ شد.")
-            elif sent_rubika_message is not None:
+            elif sent_rubika_message:
                  print(f"-> پیام ارسال شد اما پاسخ معتبری برای مپ کردن دریافت نشد. پاسخ: {sent_rubika_message}")
             
         except Exception as e:
@@ -269,6 +269,7 @@ async def main(event_queue):
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
+
 
 
 
