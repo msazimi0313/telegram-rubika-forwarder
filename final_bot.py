@@ -59,7 +59,7 @@ async def send_admin_notification(text):
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (نسخه نهایی با ساخت دستی تامبنیل)
+# پردازشگر اصلی پیام‌ها (نسخه نهایی با ارسال ابعاد)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -81,7 +81,7 @@ async def process_event(event, event_type):
                 kwargs['reply_to_message_id'] = mapping.get("rubika_id")
 
         file_path = None
-        thumb_path = None # <--- متغیر برای مسیر تامبنیل
+        thumb_path = None
         try:
             caption_or_text = message.text or ""
             sent_rubika_message = None
@@ -96,29 +96,46 @@ async def process_event(event, event_type):
                 message_type = "photo"
                 file_path = await user_client.download_media(message.photo, file="downloads/")
                 
-                # <---【راه حل نهایی: ساخت دستی تامبنیل】--->
-                print("در حال ساخت دستی تامبنیل...")
-                thumb_path = file_path + ".thumb.jpg"
+                print("در حال ساخت دستی تامبنیل و استخراج ابعاد...")
                 img = cv2.imread(file_path)
                 h, w, _ = img.shape
+                
+                thumb_path = file_path + ".thumb.jpg"
                 thumb_size = 320
                 scale = thumb_size / max(h, w)
                 thumb = cv2.resize(img, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
                 cv2.imwrite(thumb_path, thumb)
-                print(f"تامبنیل در مسیر '{thumb_path}' ساخته شد.")
+                print(f"تامبنیل ساخته شد. ابعاد عکس: {w}x{h}")
                 
+                # <---【اصلاح نهایی و قطعی: ارسال ابعاد عکس】--->
                 sent_rubika_message = await rubika_client.send_photo(
                     object_guid=destination_guid, 
                     photo=file_path, 
                     caption=caption_or_text, 
-                    thumb=thumb_path, # <--- ارسال تامبنیل به صورت دستی
+                    thumb=thumb_path,
+                    width=w,
+                    height=h,
                     **kwargs
                 )
             
             elif message.video:
                 message_type = "video"
                 file_path = await user_client.download_media(message.video, file="downloads/")
-                sent_rubika_message = await rubika_client.send_video(object_guid=destination_guid, video=file_path, caption=caption_or_text, **kwargs)
+                
+                # استخراج ابعاد ویدیو
+                cap = cv2.VideoCapture(file_path)
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                cap.release()
+                
+                sent_rubika_message = await rubika_client.send_video(
+                    object_guid=destination_guid, 
+                    video=file_path, 
+                    caption=caption_or_text,
+                    width=w,
+                    height=h,
+                    **kwargs
+                )
 
             elif message.audio:
                 message_type = "audio"
@@ -160,13 +177,13 @@ async def process_event(event, event_type):
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
         
-        finally: # <--- بلوک finally برای اطمینان از حذف فایل‌ها
+        finally:
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
             if thumb_path and os.path.exists(thumb_path):
                 os.remove(thumb_path)
     
-    # ... بقیه تابع (edited و deleted) بدون تغییر ...
+    # ... بقیه تابع بدون تغییر ...
     elif event_type == "edited":
         edited_message = event.message
         print(f"\n[پردازش ویرایش پیام] شناسه: {edited_message.id}")
@@ -265,3 +282,4 @@ async def main(event_queue):
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
+
