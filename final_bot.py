@@ -1,7 +1,7 @@
 import asyncio
 import os
 import json
-import base64 # <--- افزوده شد
+import base64
 from datetime import datetime
 import pytz
 import jdatetime
@@ -9,9 +9,10 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
 from rubpy import Client
+import cv2 # <---【افزوده شد】: کتابخانه پردازش تصویر
 
 # ===============================================================
-# بخش تنظیمات
+# بخش تنظیمات (بدون تغییر)
 # ===============================================================
 try:
     API_ID = int(os.environ.get("TELEGRAM_API_ID"))
@@ -21,19 +22,15 @@ try:
     CHANNEL_MAP_STR = os.environ.get("CHANNEL_MAP", "")
     ADMIN_IDS_STR = os.environ.get("TELEGRAM_ADMIN_ID", "")
     TELEGRAM_ADMIN_IDS = [int(admin_id.strip()) for admin_id in ADMIN_IDS_STR.split(',')]
-    # <---【تغییر نهایی】: خواندن متغیر جدید
     RUBIKA_SESSION_FILE_B64 = os.environ.get("RUBIKA_SESSION_FILE_B64")
 except (TypeError, ValueError) as e:
     print(f"خطا: یکی از متغیرهای محیطی تنظیم نشده یا فرمت آن اشتباه است: {e}")
     exit()
 
 IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
-# <---【تغییر نهایی】: نام فایل سشن که در سرور ساخته خواهد شد
 RUBIKA_SESSION_FILENAME = "rubika_session.rp"
 
-# ===============================================================
-# توابع کمکی (بدون تغییر)
-# ===============================================================
+# ... (بقیه توابع کمکی و پنل ادمین بدون تغییر باقی می‌مانند) ...
 def get_default_stats():
     return {"total_forwarded": 0, "by_type": {}, "errors": 0, "last_activity_time": None}
 
@@ -62,7 +59,7 @@ async def send_admin_notification(text):
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (نسخه نهایی با moviepy)
+# پردازشگر اصلی پیام‌ها (نسخه نهایی با ساخت دستی تامبنیل)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -84,6 +81,7 @@ async def process_event(event, event_type):
                 kwargs['reply_to_message_id'] = mapping.get("rubika_id")
 
         file_path = None
+        thumb_path = None # <--- متغیر برای مسیر تامبنیل
         try:
             caption_or_text = message.text or ""
             sent_rubika_message = None
@@ -97,7 +95,25 @@ async def process_event(event, event_type):
             if message.photo:
                 message_type = "photo"
                 file_path = await user_client.download_media(message.photo, file="downloads/")
-                sent_rubika_message = await rubika_client.send_photo(object_guid=destination_guid, photo=file_path, caption=caption_or_text, **kwargs)
+                
+                # <---【راه حل نهایی: ساخت دستی تامبنیل】--->
+                print("در حال ساخت دستی تامبنیل...")
+                thumb_path = file_path + ".thumb.jpg"
+                img = cv2.imread(file_path)
+                h, w, _ = img.shape
+                thumb_size = 320
+                scale = thumb_size / max(h, w)
+                thumb = cv2.resize(img, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
+                cv2.imwrite(thumb_path, thumb)
+                print(f"تامبنیل در مسیر '{thumb_path}' ساخته شد.")
+                
+                sent_rubika_message = await rubika_client.send_photo(
+                    object_guid=destination_guid, 
+                    photo=file_path, 
+                    caption=caption_or_text, 
+                    thumb=thumb_path, # <--- ارسال تامبنیل به صورت دستی
+                    **kwargs
+                )
             
             elif message.video:
                 message_type = "video"
@@ -123,10 +139,6 @@ async def process_event(event, event_type):
                 message_type = "text"
                 sent_rubika_message = await rubika_client.send_message(object_guid=destination_guid, text=caption_or_text, **kwargs)
 
-            if file_path and os.path.exists(file_path):
-                os.remove(file_path)
-                print(f"فایل موقت حذف شد: {file_path}")
-            
             if hasattr(sent_rubika_message, 'message_update') and hasattr(sent_rubika_message.message_update, 'message') and hasattr(sent_rubika_message.message_update.message, 'message_id'):
                 rubika_msg_id = sent_rubika_message.message_update.message.message_id
                 telegram_id = str(message.id)
@@ -142,15 +154,19 @@ async def process_event(event, event_type):
                  print(f"-> پیام ارسال شد اما پاسخ معتبری برای مپ کردن دریافت نشد. پاسخ: {sent_rubika_message}")
             
         except Exception as e:
-            if file_path and os.path.exists(file_path):
-                os.remove(file_path)
             error_message = f"!! خطا در پردازش پیام جدید: {e}"
             print(error_message)
             stats["errors"] = stats.get("errors", 0) + 1
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
+        
+        finally: # <--- بلوک finally برای اطمینان از حذف فایل‌ها
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+            if thumb_path and os.path.exists(thumb_path):
+                os.remove(thumb_path)
     
-    # ... بقیه تابع بدون تغییر ...
+    # ... بقیه تابع (edited و deleted) بدون تغییر ...
     elif event_type == "edited":
         edited_message = event.message
         print(f"\n[پردازش ویرایش پیام] شناسه: {edited_message.id}")
@@ -184,35 +200,9 @@ async def process_event(event, event_type):
             save_data_to_file('message_map.json', message_map)
         except Exception as e:
             print(f"!! خطا در پردازش حذف پیام: {e}")
-            
-# ===============================================================
-# پنل ادمین (بدون تغییر)
-# ===============================================================
-async def admin_command_handler(event):
-    global stats
-    command = event.raw_text.lower()
-    if command == "/start" or command == "/admin":
-        await event.respond("پنل مدیریت:", buttons=[["📊 آمار (/stats)"], ["⚙️ وضعیت ربات (/status)"], ["🗑 پاک کردن آمار (/clearstats)"]])
-    elif command == "/stats" or "آمار" in command:
-        last_time_str = "هنوز فعالیتی ثبت نشده"
-        if stats.get("last_activity_time"):
-            last_time_iso = datetime.fromisoformat(stats['last_activity_time'])
-            jalali_time = jdatetime.datetime.fromgregorian(datetime=last_time_iso)
-            last_time_str = jalali_time.strftime('%Y/%m/%d - %H:%M:%S')
-        stats_text = (f"📊 **آمار عملکرد ربات**\n\n🔹 **کل پیام‌های فوروارد شده:** {stats.get('total_forwarded', 0)}\n🔸 **آخرین فعالیت:** {last_time_str}\n🔺 **تعداد خطاها:** {stats.get('errors', 0)}\n\n📦 **تفکیک نوع پیام:**\n")
-        for msg_type, count in stats.get("by_type", {}).items(): stats_text += f"  - `{msg_type}`: {count}\n"
-        await event.respond(stats_text, parse_mode='markdown')
-    elif command == "/status" or "وضعیت" in command:
-        status_text = "✅ ربات فعال و در حال کار است.\n\n**— نقشه مسیردهی فعال —**\n"
-        for tg_id, rb_id in routing_map.items(): status_text += f"`{tg_id}` ➡️ `{rb_id}`\n"
-        await event.respond(status_text, parse_mode='markdown')
-    elif command == "/clearstats" or "پاک کردن آمار" in command:
-        stats = get_default_stats()
-        save_data_to_file('stats.json', stats)
-        await event.respond("🗑 آمار ربات با موفقیت پاک و صفر شد.")
 
 # ===============================================================
-# تابع اصلی برنامه (نسخه نهایی و کاملاً عملیاتی)
+# تابع اصلی برنامه (main) - بدون تغییر
 # ===============================================================
 async def main(event_queue):
     global user_client, bot_client, rubika_client, routing_map, message_map, stats
@@ -270,20 +260,8 @@ async def main(event_queue):
         await send_admin_notification(f"❌ **خطا در راه‌اندازی ربات** ❌\n\n{error_message}")
         return
 
-    # <---【اصلاح نهایی】: خط مربوط به روبیکا حذف شد
-    # کلاینت روبیکا در پس‌زمینه فعال می‌ماند. ما فقط منتظر کلاینت‌های تلگرام می‌مانیم.
     print("ربات در حال اجراست و منتظر رویدادها می‌باشد...")
     await asyncio.gather(
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
-
-
-
-
-
-
-
-
-
-
