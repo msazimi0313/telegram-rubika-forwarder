@@ -62,7 +62,7 @@ async def send_admin_notification(text):
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (نسخه نهایی با نام پارامترهای صحیح)
+# پردازشگر اصلی پیام‌ها (نسخه نهایی با متدهای صحیح فایل)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -94,11 +94,12 @@ async def process_event(event, event_type):
                 print(f"-> هشدار: سلف‌بات روبیکا از ارسال '{unsupported_type}' پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
                 return
 
+            # <---【اصلاح نهایی و قطعی: استفاده از متدهای صحیح پیشنهادی】--->
             if message.photo:
                 message_type = "photo"
                 file_path = await user_client.download_media(message.photo, file="downloads/")
-                # <---【اصلاح نهایی】: پارامتر صحیح 'caption' است
-                sent_rubika_message = await rubika_client.send_photo(object_guid=destination_guid, photo=file_path, caption=caption_or_text, **kwargs)
+                # استفاده از send_image و پارامتر image
+                sent_rubika_message = await rubika_client.send_image(object_guid=destination_guid, image=file_path, caption=caption_or_text, **kwargs)
             
             elif message.video:
                 message_type = "video"
@@ -113,7 +114,6 @@ async def process_event(event, event_type):
             elif message.voice:
                 message_type = "voice"
                 file_path = await user_client.download_media(message.voice, file="downloads/")
-                # <---【اصلاح نهایی】: ویس کپشن ندارد
                 sent_rubika_message = await rubika_client.send_voice(object_guid=destination_guid, voice=file_path, **kwargs)
 
             elif message.document:
@@ -279,6 +279,7 @@ async def main(event_queue):
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
+
 
 
 
