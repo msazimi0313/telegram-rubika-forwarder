@@ -62,7 +62,7 @@ async def send_admin_notification(text):
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (نسخه نهایی با متدهای صحیح سلف‌بات)
+# پردازشگر اصلی پیام‌ها (مدیریت هوشمندتر پاسخ)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -83,21 +83,18 @@ async def process_event(event, event_type):
             if mapping and mapping.get("rubika_id"):
                 kwargs['reply_to_message_id'] = mapping.get("rubika_id")
 
+        file_path = None
         try:
             caption_or_text = message.text or ""
             sent_rubika_message = None
             message_type = "unknown"
-            file_path = None
 
-            # بررسی انواع پیام‌هایی که سلف‌بات پشتیبانی نمی‌کند
             if any([message.media and isinstance(message.media, types.MessageMediaPoll), message.geo, message.contact]):
                 unsupported_type = "نظرسنجی" if isinstance(message.media, types.MessageMediaPoll) else ("موقعیت مکانی" if message.geo else "مخاطب")
                 print(f"-> هشدار: سلف‌بات روبیکا از ارسال '{unsupported_type}' پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
                 return
 
-            # <---【اصلاح کلیدی: منطق جدید برای ارسال فایل و متن】--->
             if message.media:
-                # برای هر نوع رسانه، ابتدا آن را دانلود می‌کنیم
                 print("در حال دانلود رسانه...")
                 file_path = await user_client.download_media(message, file="downloads/")
                 print(f"دانلود کامل شد: {file_path}")
@@ -109,28 +106,20 @@ async def process_event(event, event_type):
                 elif message.document: message_type = "document"
                 else: message_type = "media"
 
-                # از send_message با پارامتر file_path استفاده می‌کنیم
                 sent_rubika_message = await rubika_client.send_message(
-                    object_guid=destination_guid,
-                    text=caption_or_text,
-                    file_path=file_path,
-                    **kwargs
-                )
+                    object_guid=destination_guid, text=caption_or_text, file_path=file_path, **kwargs)
             
             elif message.text:
-                # برای پیام‌های متنی ساده
                 message_type = "text"
                 sent_rubika_message = await rubika_client.send_message(
-                    object_guid=destination_guid,
-                    text=caption_or_text,
-                    **kwargs
-                )
+                    object_guid=destination_guid, text=caption_or_text, **kwargs)
 
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
                 print(f"فایل موقت حذف شد: {file_path}")
             
-            if sent_rubika_message and 'message_update' in sent_rubika_message:
+            # <---【اصلاح کلیدی】: بررسی دقیق پاسخ دریافتی
+            if isinstance(sent_rubika_message, dict) and 'message_update' in sent_rubika_message:
                 rubika_msg_id = sent_rubika_message['message_update']['message_id']
                 telegram_id = str(message.id)
                 message_map[telegram_id] = {"rubika_id": rubika_msg_id, "destination_guid": destination_guid}
@@ -141,12 +130,10 @@ async def process_event(event, event_type):
                 stats["last_activity_time"] = datetime.now(IRAN_TIMEZONE).isoformat()
                 save_data_to_file('stats.json', stats)
                 print(f"-> پیام از نوع '{message_type}' با موفقیت ارسال و مپ شد.")
-            # <---【اصلاح】: بررسی دقیق‌تر پاسخ برای جلوگیری از خطای '0'
-            elif sent_rubika_message:
+            elif sent_rubika_message is not None:
                  print(f"-> پیام ارسال شد اما پاسخ معتبری برای مپ کردن دریافت نشد. پاسخ: {sent_rubika_message}")
             
         except Exception as e:
-            # اگر فایل موقت هنوز وجود داشت، آن را حذف می‌کنیم
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
             error_message = f"!! خطا در پردازش پیام جدید: {e}"
@@ -155,9 +142,8 @@ async def process_event(event, event_type):
             save_data_to_file('stats.json', stats)
             await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
     
-    # بقیه تابع (بخش‌های edited و deleted) بدون تغییر باقی می‌ماند
+    # ... بقیه تابع بدون تغییر ...
     elif event_type == "edited":
-        # ... (کد این بخش بدون تغییر است)
         edited_message = event.message
         print(f"\n[پردازش ویرایش پیام] شناسه: {edited_message.id}")
         telegram_id = str(edited_message.id)
@@ -170,7 +156,6 @@ async def process_event(event, event_type):
             print(f"-> پیام ({rubika_id}) در روبیکا ({destination_guid}) ویرایش شد.")
     
     elif event_type == "deleted":
-        # ... (کد این بخش بدون تغییر است)
         print(f"\n[پردازش حذف پیام] شناسه‌ها: {event.deleted_ids}")
         try:
             guids_to_messages = {}
@@ -284,6 +269,7 @@ async def main(event_queue):
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
+
 
 
 
