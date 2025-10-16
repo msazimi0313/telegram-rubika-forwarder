@@ -62,7 +62,7 @@ async def send_admin_notification(text):
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (نسخه نهایی با خواندن صحیح پاسخ)
+# پردازشگر اصلی پیام‌ها (با کد تست برای ارسال فایل)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -106,8 +106,13 @@ async def process_event(event, event_type):
                 elif message.document: message_type = "document"
                 else: message_type = "media"
 
+                # <---【کد تست】: ارسال فایل بدون کپشن (text) --->
+                print("در حال تست ارسال فایل بدون کپشن...")
                 sent_rubika_message = await rubika_client.send_message(
-                    object_guid=destination_guid, text=caption_or_text, file_path=file_path, **kwargs)
+                    object_guid=destination_guid,
+                    file_path=file_path,
+                    **kwargs
+                )
             
             elif message.text:
                 message_type = "text"
@@ -118,7 +123,6 @@ async def process_event(event, event_type):
                 os.remove(file_path)
                 print(f"فایل موقت حذف شد: {file_path}")
             
-            # <---【اصلاح کلیدی و نهایی】: دسترسی به message_id از طریق آبجکت پاسخ
             if hasattr(sent_rubika_message, 'message_update') and hasattr(sent_rubika_message.message_update, 'message') and hasattr(sent_rubika_message.message_update.message, 'message_id'):
                 rubika_msg_id = sent_rubika_message.message_update.message.message_id
                 telegram_id = str(message.id)
@@ -269,6 +273,7 @@ async def main(event_queue):
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
+
 
 
 
