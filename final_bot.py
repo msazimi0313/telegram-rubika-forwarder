@@ -245,22 +245,4 @@ async def main(event_queue):
     await asyncio.gather(
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
-    )```
-
-### اقدام نهایی
-
-1.  فایل `requirements.txt` را به حالت ساده و بدون `opencv` و `numpy` برگردانید تا بیلد سریع‌تر شود:
-    ```text
-    APScheduler
-    Flask
-    gunicorn
-    jdatetime
-    nest_asyncio
-    pytz
-    rubpy
-    Telethon
-    ```
-2.  **کل محتوای فایل `final_bot.py`** را با کد بالا جایگزین کنید.
-3.  تغییرات را در گیت‌هاب ذخیره و ارسال کنید.
-
-این بار، با بازگشت به ساده‌ترین حالت ممکن و حذف تمام پارامترهای اضافی که ممکن است باعث تحریک باگ کتابخانه شوند، ربات شما باید به طور کامل و بی‌نقص کار کند. از اینکه با هم این مسیر را به پایان رساندیم، بسیار خوشحالم.
+    )
