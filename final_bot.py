@@ -9,7 +9,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
 from rubpy import Client
-import cv2 # <---【افزوده شد】: کتابخانه پردازش تصویر
+import cv2
 
 # ===============================================================
 # بخش تنظیمات (بدون تغییر)
@@ -30,7 +30,7 @@ except (TypeError, ValueError) as e:
 IRAN_TIMEZONE = pytz.timezone('Asia/Tehran')
 RUBIKA_SESSION_FILENAME = "rubika_session.rp"
 
-# ... (بقیه توابع کمکی و پنل ادمین بدون تغییر باقی می‌مانند) ...
+# ... (توابع کمکی و پنل ادمین بدون تغییر) ...
 def get_default_stats():
     return {"total_forwarded": 0, "by_type": {}, "errors": 0, "last_activity_time": None}
 
@@ -59,7 +59,7 @@ async def send_admin_notification(text):
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (نسخه نهایی با ارسال ابعاد)
+# پردازشگر اصلی پیام‌ها (نسخه نهایی با send_message برای همه چیز)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -73,12 +73,12 @@ async def process_event(event, event_type):
 
         print(f"\n[پردازش پیام جدید] از {source_id} به {destination_guid}")
         
-        kwargs = {}
+        reply_kwargs = {}
         if message.is_reply and message.reply_to:
             telegram_reply_to_id = str(message.reply_to.reply_to_msg_id)
             mapping = message_map.get(telegram_reply_to_id)
             if mapping and mapping.get("rubika_id"):
-                kwargs['reply_to_message_id'] = mapping.get("rubika_id")
+                reply_kwargs['reply_to_message_id'] = mapping.get("rubika_id")
 
         file_path = None
         thumb_path = None
@@ -92,69 +92,42 @@ async def process_event(event, event_type):
                 print(f"-> هشدار: سلف‌بات روبیکا از ارسال '{unsupported_type}' پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
                 return
 
-            if message.photo:
-                message_type = "photo"
-                file_path = await user_client.download_media(message.photo, file="downloads/")
-                
-                print("در حال ساخت دستی تامبنیل و استخراج ابعاد...")
-                img = cv2.imread(file_path)
-                h, w, _ = img.shape
-                
-                thumb_path = file_path + ".thumb.jpg"
-                thumb_size = 320
-                scale = thumb_size / max(h, w)
-                thumb = cv2.resize(img, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
-                cv2.imwrite(thumb_path, thumb)
-                print(f"تامبنیل ساخته شد. ابعاد عکس: {w}x{h}")
-                
-                # <---【اصلاح نهایی و قطعی: ارسال ابعاد عکس】--->
-                sent_rubika_message = await rubika_client.send_photo(
-                    object_guid=destination_guid, 
-                    photo=file_path, 
-                    caption=caption_or_text, 
-                    thumb=thumb_path,
-                    width=w,
-                    height=h,
-                    **kwargs
-                )
-            
-            elif message.video:
-                message_type = "video"
-                file_path = await user_client.download_media(message.video, file="downloads/")
-                
-                # استخراج ابعاد ویدیو
-                cap = cv2.VideoCapture(file_path)
-                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                cap.release()
-                
-                sent_rubika_message = await rubika_client.send_video(
-                    object_guid=destination_guid, 
-                    video=file_path, 
-                    caption=caption_or_text,
-                    width=w,
-                    height=h,
-                    **kwargs
-                )
+            # <---【راه حل نهایی: استفاده از send_message برای همه چیز】--->
+            send_kwargs = {
+                "object_guid": destination_guid,
+                "text": caption_or_text,
+                **reply_kwargs
+            }
 
-            elif message.audio:
-                message_type = "audio"
-                file_path = await user_client.download_media(message.audio, file="downloads/")
-                sent_rubika_message = await rubika_client.send_audio(object_guid=destination_guid, audio=file_path, caption=caption_or_text, **kwargs)
+            if message.media:
+                file_path = await user_client.download_media(message, file="downloads/")
+                send_kwargs['file'] = file_path # <--- نام پارامتر صحیح
+                
+                if message.photo or message.video:
+                    message_type = "photo" if message.photo else "video"
+                    print("در حال استخراج متادیتای عکس/ویدیو...")
+                    cap = cv2.VideoCapture(file_path)
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    
+                    # ساخت تامبنیل
+                    ret, frame = cap.read()
+                    if ret:
+                        thumb_path = file_path + ".thumb.jpg"
+                        thumb_size = 320
+                        scale = thumb_size / max(h, w)
+                        thumb = cv2.resize(frame, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
+                        cv2.imwrite(thumb_path, thumb)
+                        send_kwargs['thumb'] = thumb_path
+                        print(f"تامبنیل ساخته شد. ابعاد: {w}x{h}")
+                    
+                    cap.release()
+                    send_kwargs['width'] = w
+                    send_kwargs['height'] = h
+                else:
+                    message_type = "document" # برای صوت، ویس و داکیومنت
 
-            elif message.voice:
-                message_type = "voice"
-                file_path = await user_client.download_media(message.voice, file="downloads/")
-                sent_rubika_message = await rubika_client.send_voice(object_guid=destination_guid, voice=file_path, **kwargs)
-
-            elif message.document:
-                message_type = "document"
-                file_path = await user_client.download_media(message.document, file="downloads/")
-                sent_rubika_message = await rubika_client.send_document(object_guid=destination_guid, document=file_path, caption=caption_or_text, **kwargs)
-
-            elif message.text:
-                message_type = "text"
-                sent_rubika_message = await rubika_client.send_message(object_guid=destination_guid, text=caption_or_text, **kwargs)
+            sent_rubika_message = await rubika_client.send_message(**send_kwargs)
 
             if hasattr(sent_rubika_message, 'message_update') and hasattr(sent_rubika_message.message_update, 'message') and hasattr(sent_rubika_message.message_update.message, 'message_id'):
                 rubika_msg_id = sent_rubika_message.message_update.message.message_id
@@ -282,4 +255,3 @@ async def main(event_queue):
         user_client.run_until_disconnected(),
         bot_client.run_until_disconnected()
     )
-
