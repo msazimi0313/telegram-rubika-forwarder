@@ -9,8 +9,7 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl import types
 from rubpy import Client
-# cv2 دیگر لازم نیست
-# import cv2
+import cv2
 
 # ===============================================================
 # بخش تنظیمات (بدون تغییر)
@@ -60,7 +59,7 @@ async def send_admin_notification(text):
                 print(f"Failed to send notification to admin {admin_id}: {e}")
 
 # ===============================================================
-# پردازشگر اصلی پیام‌ها (نسخه نهایی و ساده شده)
+# پردازشگر اصلی پیام‌ها (نسخه نهایی با send_message و جداسازی پارامتر)
 # ===============================================================
 async def process_event(event, event_type):
     global stats, message_map
@@ -74,17 +73,18 @@ async def process_event(event, event_type):
 
         print(f"\n[پردازش پیام جدید] از {source_id} به {destination_guid}")
         
-        kwargs = {}
+        reply_kwargs = {}
         if message.is_reply and message.reply_to:
             telegram_reply_to_id = str(message.reply_to.reply_to_msg_id)
             mapping = message_map.get(telegram_reply_to_id)
             if mapping and mapping.get("rubika_id"):
-                kwargs['reply_to_message_id'] = mapping.get("rubika_id")
+                reply_kwargs['reply_to_message_id'] = mapping.get("rubika_id")
 
         file_path = None
+        thumb_path = None
         try:
             caption_or_text = message.text or ""
-            sent_rubika_message = None
+            sent_file_message = None
             message_type = "unknown"
 
             if any([message.media and isinstance(message.media, types.MessageMediaPoll), message.geo, message.contact]):
@@ -92,39 +92,56 @@ async def process_event(event, event_type):
                 print(f"-> هشدار: سلف‌بات روبیکا از ارسال '{unsupported_type}' پشتیبانی نمی‌کند. از این پیام صرف‌نظر شد.")
                 return
 
-            # <---【راه حل نهایی: بازگشت به ساده‌ترین حالت ممکن】--->
-            if message.photo:
-                message_type = "photo"
-                file_path = await user_client.download_media(message.photo, file="downloads/")
-                sent_rubika_message = await rubika_client.send_photo(object_guid=destination_guid, photo=file_path, caption=caption_or_text, **kwargs)
-            
-            elif message.video:
-                message_type = "video"
-                file_path = await user_client.download_media(message.video, file="downloads/")
-                sent_rubika_message = await rubika_client.send_video(object_guid=destination_guid, video=file_path, caption=caption_or_text, **kwargs)
+            if message.media:
+                file_path = await user_client.download_media(message, file="downloads/")
+                
+                # <---【راه حل نهایی: ساخت دیکشنری آرگومان‌ها فقط برای فایل】--->
+                send_kwargs = {
+                    "object_guid": destination_guid,
+                    "file": file_path,
+                    **reply_kwargs
+                }
+                
+                if message.photo or message.video:
+                    message_type = "photo" if message.photo else "video"
+                    print("در حال استخراج متادیتای عکس/ویدیو...")
+                    cap = cv2.VideoCapture(file_path)
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    
+                    ret, frame = cap.read()
+                    if ret:
+                        thumb_path = file_path + ".thumb.jpg"
+                        thumb_size = 320
+                        scale = thumb_size / max(h, w)
+                        thumb = cv2.resize(frame, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA)
+                        cv2.imwrite(thumb_path, thumb)
+                        send_kwargs['thumb'] = thumb_path
+                    
+                    cap.release()
+                    send_kwargs['width'] = w
+                    send_kwargs['height'] = h
+                else:
+                    message_type = "document"
 
-            elif message.audio:
-                message_type = "audio"
-                file_path = await user_client.download_media(message.audio, file="downloads/")
-                sent_rubika_message = await rubika_client.send_audio(object_guid=destination_guid, audio=file_path, caption=caption_or_text, **kwargs)
+                # ارسال فایل بدون هیچ پارامتر متنی
+                sent_file_message = await rubika_client.send_message(**send_kwargs)
 
-            elif message.voice:
-                message_type = "voice"
-                file_path = await user_client.download_media(message.voice, file="downloads/")
-                sent_rubika_message = await rubika_client.send_voice(object_guid=destination_guid, voice=file_path, **kwargs)
+                # ارسال کپشن به عنوان پیام جداگانه (اگر وجود داشته باشد)
+                if caption_or_text:
+                    print("در حال ارسال کپشن به عنوان پیام جداگانه...")
+                    await rubika_client.send_message(object_guid=destination_guid, text=caption_or_text)
 
-            elif message.document:
-                message_type = "document"
-                file_path = await user_client.download_media(message.document, file="downloads/")
-                sent_rubika_message = await rubika_client.send_document(object_guid=destination_guid, document=file_path, caption=caption_or_text, **kwargs)
+                sent_rubika_message = sent_file_message
 
             elif message.text:
                 message_type = "text"
-                sent_rubika_message = await rubika_client.send_message(object_guid=destination_guid, text=caption_or_text, **kwargs)
+                sent_rubika_message = await rubika_client.send_message(object_guid=destination_guid, text=caption_or_text, **reply_kwargs)
 
             if hasattr(sent_rubika_message, 'message_update') and hasattr(sent_rubika_message.message_update, 'message') and hasattr(sent_rubika_message.message_update.message, 'message_id'):
                 rubika_msg_id = sent_rubika_message.message_update.message.message_id
                 telegram_id = str(message.id)
+                # ما فقط فایل را مپ می‌کنیم، نه کپشن را
                 message_map[telegram_id] = {"rubika_id": rubika_msg_id, "destination_guid": destination_guid}
                 save_data_to_file('message_map.json', message_map)
                 
@@ -141,11 +158,13 @@ async def process_event(event, event_type):
             print(error_message)
             stats["errors"] = stats.get("errors", 0) + 1
             save_data_to_file('stats.json', stats)
-            await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\nهنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
+            await send_admin_notification(f"❌ **خطا در ربات فورواردر** ❌\n\ن هنگام پردازش پیام از کانال `{source_id}` خطای زیر رخ داد:\n`{e}`")
         
         finally:
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
+            if thumb_path and os.path.exists(thumb_path):
+                os.remove(thumb_path)
     
     # ... بقیه تابع بدون تغییر ...
     elif event_type == "edited":
