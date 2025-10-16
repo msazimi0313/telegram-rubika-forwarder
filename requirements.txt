@@ -6,5 +6,4 @@ nest_asyncio
 pytz
 rubpy
 Telethon
-numpy
-opencv-python
+moviepy
