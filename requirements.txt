@@ -1,0 +1,4 @@
+rubpy
+telethon
+aiohttp
+python-dotenv
