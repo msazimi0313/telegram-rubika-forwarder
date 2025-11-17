@@ -12,6 +12,7 @@ from telethon.sessions import StringSession
 
 from rubpy.bot import BotClient
 from rubpy.bot.exceptions import APIException
+from rubpy.enums import ParseMode  # <--- NEW
 
 # ----------------- logging -----------------
 logging.basicConfig(level=logging.INFO)
@@ -147,14 +148,14 @@ def guess_file_type_from_telethon(msg) -> str:
     return "File"
 
 
-async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str):
+async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str, parse_mode: ParseMode = None):  # <--- CHANGED
     """
     Try sending file with primary_type (e.g. Voice). If API returns INVALID_INPUT,
     try fallback to 'File' (generic).
     Returns the rubika message id (string) or None.
     """
     try:
-        res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=caption)
+        res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=caption, parse_mode=parse_mode)  # <--- CHANGED
         return _extract_message_id(res)
     except APIException as e:
         # If server rejects the type (INVALID_INPUT), fallback to generic File
@@ -163,7 +164,7 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
         try:
             # pass file_name explicitly to help server detect type from extension
             file_name = os.path.basename(local_path)
-            res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=caption, file_name=file_name)
+            res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=caption, file_name=file_name, parse_mode=parse_mode)  # <--- CHANGED
             return _extract_message_id(res2)
         except Exception as e2:
             logger.exception("Fallback send_file(File) also failed: %s", e2)
@@ -175,10 +176,10 @@ async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubik
     try:
         if file_path:
             logger.info("Uploading %s to Rubika channel %s ...", file_type, rubika_chat_id)
-            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type)
+            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type, parse_mode=ParseMode.MARKDOWN)  # <--- CHANGED
         else:
             logger.info("Sending text to Rubika channel %s", rubika_chat_id)
-            res = await rb.send_message(chat_id=rubika_chat_id, text=text)
+            res = await rb.send_message(chat_id=rubika_chat_id, text=text, parse_mode=ParseMode.MARKDOWN)  # <--- CHANGED
             rub_mid = _extract_message_id(res)
 
         if rub_mid:
@@ -250,7 +251,7 @@ async def edited_message_handler(event):
         if new_text:
             logger.info("Editing Rubika message %s in chat %s to: %s", rubika_msg_id, rubika_chat_id, new_text[:60])
             try:
-                await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=new_text)
+                await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=new_text, parse_mode=ParseMode.MARKDOWN)  # <--- CHANGED
             except Exception as e:
                 logger.exception("Failed to edit rubika message: %s", e)
         else:
@@ -258,7 +259,7 @@ async def edited_message_handler(event):
             caption = msg.message or None
             if caption is not None:
                 try:
-                    await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=caption)
+                    await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=caption, parse_mode=ParseMode.MARKDOWN)  # <--- CHANGED
                 except Exception as e:
                     logger.exception("Failed to edit rubika caption: %s", e)
     except Exception as e:
