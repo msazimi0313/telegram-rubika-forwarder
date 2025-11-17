@@ -11,8 +11,9 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 
 from rubpy.bot import BotClient
+# NEW: Import ParseMode for Markdown support
+from rubpy.enums import ParseMode # <-- اضافه شد
 from rubpy.bot.exceptions import APIException
-from rubpy.enums import ParseMode  # <--- NEW
 
 # ----------------- logging -----------------
 logging.basicConfig(level=logging.INFO)
@@ -148,14 +149,15 @@ def guess_file_type_from_telethon(msg) -> str:
     return "File"
 
 
-async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str, parse_mode: ParseMode = None):  # <--- CHANGED
+async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str, parse_mode: Optional[ParseMode] = None): # <-- پارامتر جدید ParseMode اضافه شد
     """
     Try sending file with primary_type (e.g. Voice). If API returns INVALID_INPUT,
     try fallback to 'File' (generic).
     Returns the rubika message id (string) or None.
     """
     try:
-        res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=caption, parse_mode=parse_mode)  # <--- CHANGED
+        # ParseMode اضافه شد
+        res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=caption, parse_mode=parse_mode)
         return _extract_message_id(res)
     except APIException as e:
         # If server rejects the type (INVALID_INPUT), fallback to generic File
@@ -164,22 +166,26 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
         try:
             # pass file_name explicitly to help server detect type from extension
             file_name = os.path.basename(local_path)
-            res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=caption, file_name=file_name, parse_mode=parse_mode)  # <--- CHANGED
+            # ParseMode اضافه شد
+            res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=caption, file_name=file_name, parse_mode=parse_mode)
             return _extract_message_id(res2)
         except Exception as e2:
             logger.exception("Fallback send_file(File) also failed: %s", e2)
             raise
 
 
-async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File"):
+# <-- پارامتر جدید ParseMode اضافه شد
+async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File", parse_mode: Optional[ParseMode] = None):
     """Send to rubika and store mapping (if successful)."""
     try:
         if file_path:
             logger.info("Uploading %s to Rubika channel %s ...", file_type, rubika_chat_id)
-            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type, parse_mode=ParseMode.MARKDOWN)  # <--- CHANGED
+            # parse_mode به try_send_file_with_fallback ارسال شد
+            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type, parse_mode)
         else:
             logger.info("Sending text to Rubika channel %s", rubika_chat_id)
-            res = await rb.send_message(chat_id=rubika_chat_id, text=text, parse_mode=ParseMode.MARKDOWN)  # <--- CHANGED
+            # parse_mode به send_message اضافه شد
+            res = await rb.send_message(chat_id=rubika_chat_id, text=text, parse_mode=parse_mode)
             rub_mid = _extract_message_id(res)
 
         if rub_mid:
@@ -204,10 +210,15 @@ async def new_message_handler(event):
             logger.warning("No mapping for tg chat %s", tg_chat_id)
             return
 
+        # نکته مهم: اگرچه این قابلیت فعال شد، اما برای فوروارد کامل فرمت‌بندی،
+        # شما باید منطق تبدیل Telegram Entities به Rubika Markdown/HTML را
+        # قبل از ارسال متن به Rubika، پیاده‌سازی کنید. در اینجا فقط ParseMode فعال شده است.
+
         if msg.message and not msg.media:
             # Text-only
             text = msg.message
-            await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=text)
+            # ParseMode.MARKDOWN اضافه شد
+            await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=text, parse_mode=ParseMode.MARKDOWN)
             return
 
         if msg.media:
@@ -223,7 +234,8 @@ async def new_message_handler(event):
                     new_path = file_path + ".ogg"
                     os.rename(file_path, new_path)
                     file_path = new_path
-                await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype)
+                # ParseMode.MARKDOWN اضافه شد برای کپشن
+                await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype, parse_mode=ParseMode.MARKDOWN)
             finally:
                 # cleanup local file(s)
                 try:
@@ -251,7 +263,8 @@ async def edited_message_handler(event):
         if new_text:
             logger.info("Editing Rubika message %s in chat %s to: %s", rubika_msg_id, rubika_chat_id, new_text[:60])
             try:
-                await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=new_text, parse_mode=ParseMode.MARKDOWN)  # <--- CHANGED
+                # ParseMode.MARKDOWN اضافه شد
+                await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=new_text, parse_mode=ParseMode.MARKDOWN)
             except Exception as e:
                 logger.exception("Failed to edit rubika message: %s", e)
         else:
@@ -259,7 +272,8 @@ async def edited_message_handler(event):
             caption = msg.message or None
             if caption is not None:
                 try:
-                    await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=caption, parse_mode=ParseMode.MARKDOWN)  # <--- CHANGED
+                    # ParseMode.MARKDOWN اضافه شد
+                    await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=caption, parse_mode=ParseMode.MARKDOWN)
                 except Exception as e:
                     logger.exception("Failed to edit rubika caption: %s", e)
     except Exception as e:
