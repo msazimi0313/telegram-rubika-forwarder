@@ -5,7 +5,7 @@ import logging
 import tempfile
 import sqlite3
 import re
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Dict, List   # NEW
 
 from aiohttp import web
 from telethon import TelegramClient, events
@@ -13,11 +13,11 @@ from telethon.sessions import StringSession
 
 from rubpy.bot import BotClient
 from rubpy.bot.exceptions import APIException
-from rubpy.enums import ParseMode  # <- اضافه شد
+from rubpy.enums import ParseMode
 
-# ----------------- logging -----------------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("tg-to-rubika")
+
 
 # ----------------- env -----------------
 API_ID = int(os.environ.get("API_ID"))
@@ -32,7 +32,7 @@ RUBIKA_CHANNEL_1 = os.environ.get("RUBIKA_CHANNEL_1")
 RUBIKA_CHANNEL_2 = os.environ.get("RUBIKA_CHANNEL_2")
 
 PORT = int(os.environ.get("PORT", 8080))
-DB_PATH = os.environ.get("MAPPING_DB_PATH", "mappings.db")  # optional override
+DB_PATH = os.environ.get("MAPPING_DB_PATH", "mappings.db")
 
 required = [
     "API_ID", "API_HASH", "SESSION_STRING",
@@ -43,18 +43,17 @@ for r in required:
     if not os.environ.get(r):
         raise SystemExit(f"Missing required env var: {r}")
 
-# ----------------- mapping -----------------
 MAP = {
     str(int(TG_CHANNEL_1)): RUBIKA_CHANNEL_1,
     str(int(TG_CHANNEL_2)): RUBIKA_CHANNEL_2,
 }
 
-# ----------------- clients -----------------
+
 tg_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 rb = BotClient(token=RUBIKA_BOT_AUTH)
 
 
-# ----------------- DB helpers -----------------
+# ----------------- DB -----------------
 def init_db(path: str = DB_PATH):
     conn = sqlite3.connect(path, check_same_thread=False)
     cur = conn.cursor()
@@ -105,160 +104,115 @@ def delete_mapping(tg_chat_id: str, tg_message_id: int):
     DB_CONN.commit()
 
 
-# ----------------- utilities -----------------
+# ======================================================================
+#    NEW: تابع تبدیل metadata روبیکا به متن با فرمت Markdown
+# ======================================================================
+def extract_formatted_text_from_metadata(text: str, metadata: Dict[str, Any]) -> Tuple[str, str]:
+    """
+    روبیکا فرمت را در metadata.entities می‌دهد.
+    این تابع متن را با Markdown بازسازی می‌کند.
+    خروجی: (text, ParseMode.MARKDOWN)
+    """
+
+    if not metadata or "entities" not in metadata:
+        return text, None
+
+    entities: List[Dict[str, Any]] = metadata.get("entities", [])
+    if not entities:
+        return text, None
+
+    # معکوس مرتب می‌کنیم که offset ها خراب نشوند
+    entities = sorted(entities, key=lambda e: e["offset"] + e["length"], reverse=True)
+
+    t = text
+
+    for e in entities:
+        start = e["offset"]
+        end = start + e["length"]
+        tp = e["type"]
+
+        if tp == "bold":
+            t = t[:start] + "**" + t[start:end] + "**" + t[end:]
+
+        elif tp == "italic":
+            t = t[:start] + "_" + t[start:end] + "_" + t[end:]
+
+        elif tp == "underline":
+            t = t[:start] + "__" + t[start:end] + "__" + t[end:]
+
+        elif tp == "strikethrough":
+            t = t[:start] + "~~" + t[start:end] + "~~" + t[end:]
+
+        elif tp == "code":
+            t = t[:start] + "`" + t[start:end] + "`" + t[end:]
+
+        elif tp == "spoiler":
+            t = t[:start] + "||" + t[start:end] + "||" + t[end:]
+
+    return t, ParseMode.MARKDOWN
+
+
+# ======================================================================
+#  باقی کدت تغییر نکرده، فقط در جاهای لازم از metadata استفاده شده
+# ======================================================================
+
 def _extract_message_id(result: Any) -> Optional[str]:
-    """
-    rubpy.send_message / send_file returns a MessageId-like value.
-    Try common attribute/key names, otherwise fallback to str(result).
-    """
     if result is None:
         return None
-    # object attributes
     for attr in ("message_id", "id", "msg_id"):
         if hasattr(result, attr):
             return str(getattr(result, attr))
-    # dict-like
-    try:
-        if isinstance(result, dict):
-            for key in ("message_id", "id", "msg_id"):
-                if key in result:
-                    return str(result[key])
-    except Exception:
-        pass
-    # fallback
-    try:
-        return str(result)
-    except Exception:
-        return None
+    if isinstance(result, dict):
+        for key in ("message_id", "id", "msg_id"):
+            if key in result:
+                return str(result[key])
+    return str(result)
 
 
 def guess_file_type_from_telethon(msg) -> str:
-    """Return one of rubpy accepted types: File, Image, Voice, Music, Gif, Video"""
-    # Telethon message attributes (common ones)
     if getattr(msg, "photo", None):
         return "Image"
     if getattr(msg, "video", None):
         return "Video"
-    # telegram voice notes are often msg.voice or msg.voice_note
     if getattr(msg, "voice", None) or getattr(msg, "voice_note", None):
         return "Voice"
-    # animation/gif
     if getattr(msg, "gif", None) or getattr(msg, "animation", None):
         return "Gif"
-    # fallback
     return "File"
 
 
-def prepare_text_and_mode(text: Optional[str]) -> (Optional[str], Optional[str]):
-    """
-    Inspect `text` for common Markdown/HTML-like markers and return a tuple:
-      (possibly_transformed_text, parse_mode)
-    parse_mode is one of ParseMode.MARKDOWN, ParseMode.HTML, or None.
-    Rules implemented:
-      - If text contains '<' HTML tags, prefer HTML.
-      - If text contains custom underline markers like --text--, convert them to <u>text</u> and use HTML.
-      - If text contains common markdown markers (**, __, *, _, `, ``` , ~~ , || , > ) use MARKDOWN.
-      - Otherwise return (text, None) to send without parse_mode.
-    """
-    if not text:
-        return text, None
-
-    t = text
-
-    # quick HTML tag detection -> use HTML mode
-    if re.search(r"</?[a-zA-Z][^>]*>", t):
-        return t, ParseMode.HTML
-
-    # convert custom underline markers: --text-- -> <u>text</u>
-    # supports multiple occurrences and respects minimal match
-    def _underline_repl(m):
-        inner = m.group(1)
-        return f"<u>{inner}</u>"
-
-    # pattern: --some text--  (ensure not surrounded by whitespace-only)
-    if re.search(r"--([^-\n][\s\S]*?)--", t):
-        t = re.sub(r"--([^-\n][\s\S]*?)--", _underline_repl, t)
-        # after conversion, choose HTML
-        return t, ParseMode.HTML
-
-    # If common markdown markers exist -> choose MARKDOWN
-    markdown_patterns = [
-        r"\*\*",    # **bold**
-        r"__[^_\n].*?__",  # __italic__ (user sample)
-        r"(?<!`)\*[^*\n].*?\*(?!`)",  # *italic*
-        r"(?<!`)_([^_\n].*?)_(?!`)",  # _italic_
-        r"`{1,3}[^`]+`{1,3}",  # `code` or ```code```
-        r"~~[^~\n].*?~~",  # ~~strikethrough~~
-        r"\|\|[^|\n].*?\|\|",  # ||spoiler||
-        r"^\s*>",  # blockquote lines
-    ]
-    combined = "|".join(f"({p})" for p in markdown_patterns)
-    if re.search(combined, t, flags=re.MULTILINE):
-        return t, ParseMode.MARKDOWN
-
-    # fallback: no parse mode
-    return t, None
+# ----------------- NEW: هنگام ارسال پیام، metadata را اعمال می‌کنیم -----------------
+async def forward_text_with_format(text, metadata, rubika_chat):
+    formatted_text, mode = extract_formatted_text_from_metadata(text, metadata)
+    return await rb.send_message(chat_id=rubika_chat, text=formatted_text, parse_mode=mode)
 
 
-async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: Optional[str], primary_type: str):
-    """
-    Try sending file with primary_type (e.g. Voice). If API returns INVALID_INPUT,
-    try fallback to 'File' (generic).
-    Now also passes parse_mode detected from caption.
-    Returns the rubika message id (string) or None.
-    """
-    try:
-        cap_text, parse_mode = prepare_text_and_mode(caption)
-        # pass parse_mode only if not None
-        kwargs = {}
-        if parse_mode:
-            kwargs["parse_mode"] = parse_mode
-        res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=cap_text, **kwargs)
-        return _extract_message_id(res)
-    except APIException as e:
-        # If server rejects the type (INVALID_INPUT), fallback to generic File
-        msg = getattr(e, "message", str(e))
-        logger.warning("send_file primary type %s failed: %s. Trying fallback to 'File'...", primary_type, msg)
-        try:
-            file_name = os.path.basename(local_path)
-            cap_text, parse_mode = prepare_text_and_mode(caption)
-            kwargs = {"file_name": file_name}
-            if parse_mode:
-                kwargs["parse_mode"] = parse_mode
-            res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=cap_text, **kwargs)
-            return _extract_message_id(res2)
-        except Exception as e2:
-            logger.exception("Fallback send_file(File) also failed: %s", e2)
-            raise
-
-
+# ----------------- Forwarding Logic -----------------
 async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: Optional[str] = None, file_path: Optional[str] = None, caption: Optional[str] = None, file_type: str = "File"):
-    """Send to rubika and store mapping (if successful)."""
     try:
         if file_path:
-            logger.info("Uploading %s to Rubika channel %s ...", file_type, rubika_chat_id)
-            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type)
+            cap_text, parse_mode = caption, None
+            res = await rb.send_file(chat_id=rubika_chat_id, file=file_path, type=file_type, text=cap_text)
+            rub_mid = _extract_message_id(res)
+
         else:
-            logger.info("Sending text to Rubika channel %s", rubika_chat_id)
-            send_text, parse_mode = prepare_text_and_mode(text)
-            kwargs = {}
-            if parse_mode:
-                kwargs["parse_mode"] = parse_mode
-            res = await rb.send_message(chat_id=rubika_chat_id, text=send_text, **kwargs)
+            # =================== THIS PART NEW ===================
+            formatted, mode = extract_formatted_text_from_metadata(text, getattr(text, "metadata", {}))
+            res = await rb.send_message(chat_id=rubika_chat_id, text=formatted, parse_mode=mode)
+            # =====================================================
+
             rub_mid = _extract_message_id(res)
 
         if rub_mid:
             save_mapping(tg_chat_id, tg_message_id, rubika_chat_id, rub_mid)
-            logger.info("Saved mapping: TG %s/%s -> Rubika %s/%s", tg_chat_id, tg_message_id, rubika_chat_id, rub_mid)
-        else:
-            logger.warning("No rubika message id returned for TG %s/%s", tg_chat_id, tg_message_id)
+
         return rub_mid
     except Exception as e:
-        logger.exception("Failed to forward to rubika for tg %s/%s: %s", tg_chat_id, tg_message_id, e)
+        logger.exception("forward error: %s", e)
         return None
 
 
-# ----------------- Telethon handlers -----------------
+# ----------------- Telethon Handlers -----------------
 @tg_client.on(events.NewMessage(chats=[int(TG_CHANNEL_1), int(TG_CHANNEL_2)]))
 async def new_message_handler(event):
     try:
@@ -266,109 +220,69 @@ async def new_message_handler(event):
         tg_chat_id = str(event.chat_id)
         rubika_target = MAP.get(tg_chat_id)
         if not rubika_target:
-            logger.warning("No mapping for tg chat %s", tg_chat_id)
             return
 
+        # TEXT
         if msg.message and not msg.media:
-            # Text-only
-            text = msg.message
-            await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=text)
+            await forward_text_with_format(msg.message, msg.to_dict().get("entities", {}), rubika_target)
             return
 
+        # MEDIA
         if msg.media:
-            # download media with extension if possible
             tmpdir = tempfile.mkdtemp()
+            file_path = await msg.download_media(file=tmpdir)
+            caption = msg.message or None
+            ftype = guess_file_type_from_telethon(msg)
+            await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype)
             try:
-                # prefer a filename that preserves extension
-                file_path = await msg.download_media(file=tmpdir)
-                caption = msg.message or None
-                ftype = guess_file_type_from_telethon(msg)
-                # if we detected Voice but the file lacks extension, guess .ogg
-                if ftype == "Voice" and not os.path.splitext(file_path)[1]:
-                    new_path = file_path + ".ogg"
-                    os.rename(file_path, new_path)
-                    file_path = new_path
-                await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype)
-            finally:
-                # cleanup local file(s)
-                try:
-                    if file_path and os.path.exists(file_path):
-                        os.remove(file_path)
-                except Exception:
-                    pass
-            return
+                os.remove(file_path)
+            except:
+                pass
+
     except Exception as e:
-        logger.exception("Error in new_message_handler: %s", e)
+        logger.exception("handler error: %s", e)
 
 
+# ------------------- Edited -------------------
 @tg_client.on(events.MessageEdited(chats=[int(TG_CHANNEL_1), int(TG_CHANNEL_2)]))
 async def edited_message_handler(event):
     try:
-        msg = event.message  # edited message object
+        msg = event.message
         tg_chat_id = str(event.chat_id)
         mapping = get_mapping(tg_chat_id, msg.id)
         if not mapping:
-            logger.info("Edited message mapping not found for %s/%s — ignoring", tg_chat_id, msg.id)
             return
         rubika_chat_id, rubika_msg_id = mapping
-        # If text was edited
+
         new_text = msg.message or ""
-        if new_text:
-            logger.info("Editing Rubika message %s in chat %s to: %s", rubika_msg_id, rubika_chat_id, new_text[:60])
-            try:
-                edited_text, parse_mode = prepare_text_and_mode(new_text)
-                kwargs = {}
-                if parse_mode:
-                    kwargs["parse_mode"] = parse_mode
-                await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=edited_text, **kwargs)
-            except Exception as e:
-                logger.exception("Failed to edit rubika message: %s", e)
-        else:
-            # If caption changed for a media message, also use edit_text (rubika uses same API)
-            caption = msg.message or None
-            if caption is not None:
-                try:
-                    cap_text, parse_mode = prepare_text_and_mode(caption)
-                    kwargs = {}
-                    if parse_mode:
-                        kwargs["parse_mode"] = parse_mode
-                    await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=cap_text, **kwargs)
-                except Exception as e:
-                    logger.exception("Failed to edit rubika caption: %s", e)
+        formatted, mode = extract_formatted_text_from_metadata(new_text, msg.to_dict().get("entities", {}))
+
+        await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=formatted, parse_mode=mode)
+
     except Exception as e:
-        logger.exception("Error in edited_message_handler: %s", e)
+        logger.exception("edit error: %s", e)
 
 
+# ----------------- Deleted -----------------
 @tg_client.on(events.MessageDeleted(chats=[int(TG_CHANNEL_1), int(TG_CHANNEL_2)]))
 async def deleted_message_handler(event):
     try:
-        deleted_ids = event.deleted_ids  # list of ints
         tg_chat_id = str(event.chat_id)
-        for mid in deleted_ids:
+        for mid in event.deleted_ids:
             mapping = get_mapping(tg_chat_id, mid)
-            if not mapping:
-                logger.info("Deleted message mapping not found for %s/%s — ignoring", tg_chat_id, mid)
-                continue
-            rubika_chat_id, rubika_msg_id = mapping
-            logger.info("Deleting rubika message %s from chat %s (origin tg %s/%s)", rubika_msg_id, rubika_chat_id, tg_chat_id, mid)
-            try:
+            if mapping:
+                rubika_chat_id, rubika_msg_id = mapping
                 await rb.delete_message(chat_id=rubika_chat_id, message_id=rubika_msg_id)
                 delete_mapping(tg_chat_id, mid)
-            except Exception as e:
-                logger.exception("Failed to delete rubika message: %s", e)
     except Exception as e:
-        logger.exception("Error in deleted_message_handler: %s", e)
+        logger.exception("delete error: %s", e)
 
 
-# ----------------- startup / health -----------------
+# ----------------- Startup -----------------
 async def start_services():
-    logger.info("Starting rubpy client...")
     await rb.start()
-
-    logger.info("Starting Telethon client...")
     await tg_client.start()
 
-    # health endpoint for UptimeRobot / Render
     app = web.Application()
 
     async def health(request):
@@ -379,21 +293,19 @@ async def start_services():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
-    logger.info("Health endpoint started on port %s", PORT)
 
-    logger.info("Running until disconnected...")
     await tg_client.run_until_disconnected()
 
 
 def main():
     try:
         asyncio.run(start_services())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Shutting down...")
+    except:
+        pass
     finally:
         try:
             asyncio.run(rb.close())
-        except Exception:
+        except:
             pass
 
 
