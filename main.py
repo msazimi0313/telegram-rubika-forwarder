@@ -9,9 +9,15 @@ from typing import Optional, Tuple, Any
 from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+from telethon.tl.types import (
+    MessageEntityBold, MessageEntityItalic, MessageEntityStrike,
+    MessageEntityUnderline, MessageEntityCode, MessageEntityPre,
+    MessageEntityTextUrl, MessageEntitySpoiler, MessageEntityUrl
+)
 
-from rubpy.bot import BotClient
+from rubpy import BotClient
 from rubpy.bot.exceptions import APIException
+from rubpy.enums import ParseMode
 
 # ----------------- logging -----------------
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +56,61 @@ MAP = {
 # ----------------- clients -----------------
 tg_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 rb = BotClient(token=RUBIKA_BOT_AUTH)
+
+
+# ----------------- Markdown Helper -----------------
+def telethon_to_rubika_markdown(message):
+    """
+    Converts a Telethon message (text + entities) into a Rubika-compatible Markdown string.
+    Supports: Bold, Italic, Strike, Underline, Spoiler, Code, Pre, TextUrl.
+    """
+    text = message.raw_text or ""
+    if not message.entities:
+        return text
+
+    # Create a list of markers to insert: (index, insert_string)
+    markers = []
+
+    for entity in message.entities:
+        start = entity.offset
+        end = entity.offset + entity.length
+
+        if isinstance(entity, MessageEntityBold):
+            markers.append((start, "**"))
+            markers.append((end, "**"))
+        elif isinstance(entity, MessageEntityItalic):
+            markers.append((start, "__"))
+            markers.append((end, "__"))
+        elif isinstance(entity, MessageEntityStrike):
+            markers.append((start, "~~"))
+            markers.append((end, "~~"))
+        elif isinstance(entity, MessageEntityUnderline):
+            markers.append((start, "--"))
+            markers.append((end, "--"))
+        elif isinstance(entity, MessageEntitySpoiler):
+            markers.append((start, "||"))
+            markers.append((end, "||"))
+        elif isinstance(entity, MessageEntityCode):
+            markers.append((start, "`"))
+            markers.append((end, "`"))
+        elif isinstance(entity, MessageEntityPre):
+            markers.append((start, "```\n"))
+            markers.append((end, "\n```"))
+        elif isinstance(entity, MessageEntityTextUrl):
+            markers.append((start, "["))
+            markers.append((end, f"]({entity.url})"))
+        # Note: MessageEntityUrl is usually just the raw text, so no need to wrap unless desired.
+
+    # Sort markers by index descending to insert without messing up offsets
+    # If indices are equal, we need a stable order. For closing tags (end), we insert before opening if reverse.
+    # Actually, simpler logic: sort descending by index.
+    markers.sort(key=lambda x: x[0], reverse=True)
+
+    for index, string in markers:
+        # Insert the marker into the text
+        text = text[:index] + string + text[index:]
+    
+    return text
 
 
 # ----------------- DB helpers -----------------
@@ -154,7 +215,8 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
     Returns the rubika message id (string) or None.
     """
     try:
-        res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=caption)
+        # Added parse_mode=ParseMode.MARKDOWN
+        res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=caption, parse_mode=ParseMode.MARKDOWN)
         return _extract_message_id(res)
     except APIException as e:
         # If server rejects the type (INVALID_INPUT), fallback to generic File
@@ -163,7 +225,8 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
         try:
             # pass file_name explicitly to help server detect type from extension
             file_name = os.path.basename(local_path)
-            res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=caption, file_name=file_name)
+            # Added parse_mode=ParseMode.MARKDOWN here as well
+            res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=caption, file_name=file_name, parse_mode=ParseMode.MARKDOWN)
             return _extract_message_id(res2)
         except Exception as e2:
             logger.exception("Fallback send_file(File) also failed: %s", e2)
@@ -178,7 +241,8 @@ async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubik
             rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type)
         else:
             logger.info("Sending text to Rubika channel %s", rubika_chat_id)
-            res = await rb.send_message(chat_id=rubika_chat_id, text=text)
+            # Added parse_mode=ParseMode.MARKDOWN
+            res = await rb.send_message(chat_id=rubika_chat_id, text=text, parse_mode=ParseMode.MARKDOWN)
             rub_mid = _extract_message_id(res)
 
         if rub_mid:
@@ -205,7 +269,8 @@ async def new_message_handler(event):
 
         if msg.message and not msg.media:
             # Text-only
-            text = msg.message
+            # Convert to Markdown before sending
+            text = telethon_to_rubika_markdown(msg)
             await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=text)
             return
 
@@ -215,7 +280,8 @@ async def new_message_handler(event):
             try:
                 # prefer a filename that preserves extension
                 file_path = await msg.download_media(file=tmpdir)
-                caption = msg.message or None
+                # Convert caption to Markdown
+                caption = telethon_to_rubika_markdown(msg) or None
                 ftype = guess_file_type_from_telethon(msg)
                 # if we detected Voice but the file lacks extension, guess .ogg
                 if ftype == "Voice" and not os.path.splitext(file_path)[1]:
@@ -245,22 +311,18 @@ async def edited_message_handler(event):
             logger.info("Edited message mapping not found for %s/%s — ignoring", tg_chat_id, msg.id)
             return
         rubika_chat_id, rubika_msg_id = mapping
-        # If text was edited
-        new_text = msg.message or ""
-        if new_text:
-            logger.info("Editing Rubika message %s in chat %s to: %s", rubika_msg_id, rubika_chat_id, new_text[:60])
+        
+        # Convert edited text/caption to Markdown
+        new_text_markdown = telethon_to_rubika_markdown(msg)
+
+        if new_text_markdown:
+            logger.info("Editing Rubika message %s in chat %s to: %s", rubika_msg_id, rubika_chat_id, new_text_markdown[:60])
             try:
-                await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=new_text)
+                # Added parse_mode=ParseMode.MARKDOWN
+                await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=new_text_markdown, parse_mode=ParseMode.MARKDOWN)
             except Exception as e:
                 logger.exception("Failed to edit rubika message: %s", e)
-        else:
-            # If caption changed for a media message, also use edit_text (rubika uses same API)
-            caption = msg.message or None
-            if caption is not None:
-                try:
-                    await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=caption)
-                except Exception as e:
-                    logger.exception("Failed to edit rubika caption: %s", e)
+        
     except Exception as e:
         logger.exception("Error in edited_message_handler: %s", e)
 
