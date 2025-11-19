@@ -20,7 +20,6 @@ from telethon.tl.types import (
 import rubpy
 from rubpy.bot import BotClient
 from rubpy.bot.exceptions import APIException
-# حتما ParseMode را ایمپورت می‌کنیم
 from rubpy.enums import ParseMode
 
 # ----------------- logging -----------------
@@ -152,11 +151,11 @@ def guess_file_type_from_telethon(msg) -> str:
     return "File"
 
 
-# --- تابع جدید: تبدیل متن و Entityها به فرمت Markdown ---
+# --- تابع تبدیل متن و Entityها به فرمت Markdown ---
 def apply_markdown_to_text(text: str, entities: list) -> str:
     """
     این تابع متن خام و لیست فرمت‌های تلگرام را می‌گیرد و
-    علامت‌های مارک‌داون (**، __ و ...) را به متن اضافه می‌کند.
+    علامت‌های مارک‌داون (**، __، -- و ...) را به متن اضافه می‌کند.
     """
     if not entities or not text:
         return text
@@ -177,6 +176,10 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         elif isinstance(ent, MessageEntityStrike):
             insertions.append((start, "~~"))
             insertions.append((end, "~~"))
+        elif isinstance(ent, MessageEntityUnderline):
+            # اضافه شدن پشتیبانی از زیرخط (Underline) با استفاده از --
+            insertions.append((start, "--"))
+            insertions.append((end, "--"))
         elif isinstance(ent, MessageEntitySpoiler):
             insertions.append((start, "||"))
             insertions.append((end, "||"))
@@ -188,18 +191,14 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             insertions.append((start, "["))
             insertions.append((end, f"]({ent.url})"))
         elif isinstance(ent, MessageEntityBlockquote):
-             # برای کئوت: > در ابتدای خط
+             # برای نقل قول
              insertions.append((start, "> "))
-             # کئوت پایان مشخصی ندارد معمولا تا پایان خط است، اما فعلا ساده نگه می‌داریم
     
-    # مرتب‌سازی نزولی (از آخر به اول)
-    # دلیل: اگر از اول متن چیزی اضافه کنیم، ایندکس‌های بعدی جابجا می‌شوند.
-    # با شروع از آخر متن، ایندکس‌های ابتدای متن دست‌نخورده باقی می‌مانند.
+    # مرتب‌سازی نزولی (از آخر به اول) برای جلوگیری از بهم ریختن ایندکس‌ها
     insertions.sort(key=lambda x: x[0], reverse=True)
     
     res_text = text
     for index, string_to_insert in insertions:
-        # اطمینان از اینکه ایندکس معتبر است
         if 0 <= index <= len(res_text):
             res_text = res_text[:index] + string_to_insert + res_text[index:]
             
@@ -225,15 +224,12 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
 
 
 async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File"):
-    """Send to rubika (Markdown enabled) and store mapping."""
     try:
         if file_path:
             logger.info("Uploading %s to Rubika channel %s ...", file_type, rubika_chat_id)
             rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type)
         else:
             logger.info("Sending text to Rubika channel %s", rubika_chat_id)
-            
-            # استفاده از parse_mode='Markdown'
             res = await rb.send_message(chat_id=rubika_chat_id, text=text, parse_mode=ParseMode.MARKDOWN)
             rub_mid = _extract_message_id(res)
 
@@ -259,11 +255,10 @@ async def new_message_handler(event):
             logger.warning("No mapping for tg chat %s", tg_chat_id)
             return
 
-        # تبدیل متن به فرمت مارک‌داون (اضافه کردن ** و __ و غیره)
+        # تبدیل متن به فرمت مارک‌داون
         markdown_text = apply_markdown_to_text(msg.message, msg.entities)
         
         if msg.message and not msg.media:
-            # ارسال متن تبدیل شده
             await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=markdown_text)
             return
 
@@ -271,7 +266,6 @@ async def new_message_handler(event):
             tmpdir = tempfile.mkdtemp()
             try:
                 file_path = await msg.download_media(file=tmpdir)
-                # کپشن را هم تبدیل می‌کنیم
                 caption = apply_markdown_to_text(msg.message or "", msg.entities) or None
                 
                 ftype = guess_file_type_from_telethon(msg)
@@ -303,17 +297,14 @@ async def edited_message_handler(event):
             return
         rubika_chat_id, rubika_msg_id = mapping
         
-        # برای ادیت هم باید متن جدید را به مارک‌داون تبدیل کنیم
         new_markdown_text = apply_markdown_to_text(msg.message or "", msg.entities)
 
         if new_markdown_text:
             logger.info("Editing Rubika message %s in chat %s", rubika_msg_id, rubika_chat_id)
             try:
-                # در متد ادیت هم parse_mode را اضافه می‌کنیم
                 await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=new_markdown_text, parse_mode=ParseMode.MARKDOWN)
             except Exception as e:
                 logger.exception("Failed to edit rubika message: %s", e)
-        # (بخش کپشن مدیا هم مشابه متن عمل می‌کند چون rb.edit_message_text مشترک است)
     except Exception as e:
         logger.exception("Error in edited_message_handler: %s", e)
 
