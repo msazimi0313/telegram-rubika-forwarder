@@ -4,16 +4,20 @@ import asyncio
 import logging
 import tempfile
 import sqlite3
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Dict, List
 
 from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+# ایمپورت کردن تایپ‌های فرمت‌دهی تلگرام برای شناسایی
+from telethon.tl.types import (
+    MessageEntityBold, MessageEntityItalic, MessageEntityStrike, 
+    MessageEntityUnderline, MessageEntitySpoiler, MessageEntityCode, 
+    MessageEntityPre, MessageEntityTextUrl, MessageEntityBlockquote
+)
 
 from rubpy.bot import BotClient
 from rubpy.bot.exceptions import APIException
-# اضافه کردن ماژول ParseMode برای پشتیبانی از فرمت‌دهی
-from rubpy.enums import ParseMode
 
 # ----------------- logging -----------------
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +36,7 @@ RUBIKA_CHANNEL_1 = os.environ.get("RUBIKA_CHANNEL_1")
 RUBIKA_CHANNEL_2 = os.environ.get("RUBIKA_CHANNEL_2")
 
 PORT = int(os.environ.get("PORT", 8080))
-DB_PATH = os.environ.get("MAPPING_DB_PATH", "mappings.db")  # optional override
+DB_PATH = os.environ.get("MAPPING_DB_PATH", "mappings.db")
 
 required = [
     "API_ID", "API_HASH", "SESSION_STRING",
@@ -107,17 +111,11 @@ def delete_mapping(tg_chat_id: str, tg_message_id: int):
 
 # ----------------- utilities -----------------
 def _extract_message_id(result: Any) -> Optional[str]:
-    """
-    rubpy.send_message / send_file returns a MessageId-like value.
-    Try common attribute/key names, otherwise fallback to str(result).
-    """
     if result is None:
         return None
-    # object attributes
     for attr in ("message_id", "id", "msg_id"):
         if hasattr(result, attr):
             return str(getattr(result, attr))
-    # dict-like
     try:
         if isinstance(result, dict):
             for key in ("message_id", "id", "msg_id"):
@@ -125,7 +123,6 @@ def _extract_message_id(result: Any) -> Optional[str]:
                     return str(result[key])
     except Exception:
         pass
-    # fallback
     try:
         return str(result)
     except Exception:
@@ -133,57 +130,93 @@ def _extract_message_id(result: Any) -> Optional[str]:
 
 
 def guess_file_type_from_telethon(msg) -> str:
-    """Return one of rubpy accepted types: File, Image, Voice, Music, Gif, Video"""
-    # Telethon message attributes (common ones)
     if getattr(msg, "photo", None):
         return "Image"
     if getattr(msg, "video", None):
         return "Video"
-    # telegram voice notes are often msg.voice or msg.voice_note
     if getattr(msg, "voice", None) or getattr(msg, "voice_note", None):
         return "Voice"
-    # animation/gif
     if getattr(msg, "gif", None) or getattr(msg, "animation", None):
         return "Gif"
-    # fallback
     return "File"
 
 
-async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str):
+# --- تابع تبدیل مستقیم Entity تلگرام به Metadata روبیکا ---
+def telethon_to_metadata(entities: list) -> Optional[Dict]:
     """
-    Try sending file with primary_type (e.g. Voice). If API returns INVALID_INPUT,
-    try fallback to 'File' (generic).
-    Returns the rubika message id (string) or None.
+    Converts Telethon entities directly to Rubika metadata structure.
+    Rubika expects: {'meta_data_parts': [{'from_index': int, 'length': int, 'type': str, ...}]}
     """
+    if not entities:
+        return None
+
+    parts = []
+    for entity in entities:
+        part_type = None
+        extra_data = {}
+
+        # نگاشت (Mapping) انواع فرمت‌های تلگرام به روبیکا
+        if isinstance(entity, MessageEntityBold):
+            part_type = "Bold"
+        elif isinstance(entity, MessageEntityItalic):
+            part_type = "Italic"
+        elif isinstance(entity, MessageEntityStrike):
+            part_type = "Strike"
+        elif isinstance(entity, MessageEntityUnderline):
+            part_type = "Underline"
+        elif isinstance(entity, MessageEntitySpoiler):
+            part_type = "Spoiler"
+        elif isinstance(entity, (MessageEntityCode, MessageEntityPre)):
+            part_type = "Mono"
+        elif isinstance(entity, MessageEntityTextUrl):
+            part_type = "Link"
+            extra_data["link"] = {"type": "web", "url": entity.url}
+        # نقل‌قول (Quote) در روبیکا متادیتای استاندارد ندارد، معمولاً به صورت متن > نمایش داده می‌شود
+        # اما اگر نیاز باشد می‌توان آن را به عنوان Mono یا فرمت دیگر در نظر گرفت. فعلاً نادیده می‌گیریم.
+
+        if part_type:
+            data = {
+                "from_index": entity.offset,
+                "length": entity.length,
+                "type": part_type
+            }
+            if extra_data:
+                data.update(extra_data)
+            parts.append(data)
+    
+    if not parts:
+        return None
+        
+    return {"meta_data_parts": parts}
+
+
+async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str, metadata: dict = None):
     try:
-        # اضافه شدن parse_mode=ParseMode.MARKDOWN برای پشتیبانی از کپشن‌های فرمت‌دار
-        res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=caption, parse_mode=ParseMode.MARKDOWN)
+        # استفاده از metadata به جای parse_mode
+        res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=caption, metadata=metadata)
         return _extract_message_id(res)
     except APIException as e:
-        # If server rejects the type (INVALID_INPUT), fallback to generic File
         msg = getattr(e, "message", str(e))
         logger.warning("send_file primary type %s failed: %s. Trying fallback to 'File'...", primary_type, msg)
         try:
-            # pass file_name explicitly to help server detect type from extension
             file_name = os.path.basename(local_path)
-            # اضافه شدن parse_mode=ParseMode.MARKDOWN برای حالت فال‌بک
-            res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=caption, file_name=file_name, parse_mode=ParseMode.MARKDOWN)
+            # فال‌بک به فایل معمولی با همان متادیتا
+            res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=caption, file_name=file_name, metadata=metadata)
             return _extract_message_id(res2)
         except Exception as e2:
             logger.exception("Fallback send_file(File) also failed: %s", e2)
             raise
 
 
-async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File"):
-    """Send to rubika and store mapping (if successful)."""
+async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File", metadata: dict = None):
     try:
         if file_path:
-            logger.info("Uploading %s to Rubika channel %s ...", file_type, rubika_chat_id)
-            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type)
+            logger.info("Uploading %s to Rubika channel %s with metadata...", file_type, rubika_chat_id)
+            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type, metadata=metadata)
         else:
-            logger.info("Sending text to Rubika channel %s", rubika_chat_id)
-            # اضافه شدن parse_mode=ParseMode.MARKDOWN برای پیام‌های متنی
-            res = await rb.send_message(chat_id=rubika_chat_id, text=text, parse_mode=ParseMode.MARKDOWN)
+            logger.info("Sending text to Rubika channel %s with metadata", rubika_chat_id)
+            # ارسال مستقیم دیکشنری متادیتا
+            res = await rb.send_message(chat_id=rubika_chat_id, text=text, metadata=metadata)
             rub_mid = _extract_message_id(res)
 
         if rub_mid:
@@ -208,28 +241,28 @@ async def new_message_handler(event):
             logger.warning("No mapping for tg chat %s", tg_chat_id)
             return
 
+        # 1. استخراج مستقیم متادیتا از موجودیت‌های تلگرام
+        meta = telethon_to_metadata(msg.entities)
+        
         if msg.message and not msg.media:
-            # Text-only
-            text = msg.message
-            await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=text)
+            # Text-only: متن اصلی (بدون تغییر) + متادیتا ارسال می‌شود
+            await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=msg.message, metadata=meta)
             return
 
         if msg.media:
-            # download media with extension if possible
             tmpdir = tempfile.mkdtemp()
             try:
-                # prefer a filename that preserves extension
                 file_path = await msg.download_media(file=tmpdir)
                 caption = msg.message or None
                 ftype = guess_file_type_from_telethon(msg)
-                # if we detected Voice but the file lacks extension, guess .ogg
                 if ftype == "Voice" and not os.path.splitext(file_path)[1]:
                     new_path = file_path + ".ogg"
                     os.rename(file_path, new_path)
                     file_path = new_path
-                await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype)
+                
+                # ارسال فایل به همراه کپشن و متادیتا
+                await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype, metadata=meta)
             finally:
-                # cleanup local file(s)
                 try:
                     if file_path and os.path.exists(file_path):
                         os.remove(file_path)
@@ -243,29 +276,31 @@ async def new_message_handler(event):
 @tg_client.on(events.MessageEdited(chats=[int(TG_CHANNEL_1), int(TG_CHANNEL_2)]))
 async def edited_message_handler(event):
     try:
-        msg = event.message  # edited message object
+        msg = event.message
         tg_chat_id = str(event.chat_id)
         mapping = get_mapping(tg_chat_id, msg.id)
         if not mapping:
             logger.info("Edited message mapping not found for %s/%s — ignoring", tg_chat_id, msg.id)
             return
         rubika_chat_id, rubika_msg_id = mapping
-        # If text was edited
+        
+        # تولید متادیتا برای پیام ادیت شده
+        meta = telethon_to_metadata(msg.entities)
         new_text = msg.message or ""
+
         if new_text:
-            logger.info("Editing Rubika message %s in chat %s to: %s", rubika_msg_id, rubika_chat_id, new_text[:60])
+            logger.info("Editing Rubika message %s in chat %s", rubika_msg_id, rubika_chat_id)
             try:
-                # اضافه شدن parse_mode برای ویرایش پیام
-                await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=new_text, parse_mode=ParseMode.MARKDOWN)
+                # استفاده از metadata در ادیت
+                await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=new_text, metadata=meta)
             except Exception as e:
                 logger.exception("Failed to edit rubika message: %s", e)
         else:
-            # If caption changed for a media message, also use edit_text (rubika uses same API)
+            # اگر فقط مدیا کپشن دارد
             caption = msg.message or None
             if caption is not None:
                 try:
-                    # اضافه شدن parse_mode برای ویرایش کپشن
-                    await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=caption, parse_mode=ParseMode.MARKDOWN)
+                    await rb.edit_message_text(chat_id=rubika_chat_id, message_id=rubika_msg_id, text=caption, metadata=meta)
                 except Exception as e:
                     logger.exception("Failed to edit rubika caption: %s", e)
     except Exception as e:
@@ -275,7 +310,7 @@ async def edited_message_handler(event):
 @tg_client.on(events.MessageDeleted(chats=[int(TG_CHANNEL_1), int(TG_CHANNEL_2)]))
 async def deleted_message_handler(event):
     try:
-        deleted_ids = event.deleted_ids  # list of ints
+        deleted_ids = event.deleted_ids
         tg_chat_id = str(event.chat_id)
         for mid in deleted_ids:
             mapping = get_mapping(tg_chat_id, mid)
@@ -301,7 +336,6 @@ async def start_services():
     logger.info("Starting Telethon client...")
     await tg_client.start()
 
-    # health endpoint for UptimeRobot / Render
     app = web.Application()
 
     async def health(request):
