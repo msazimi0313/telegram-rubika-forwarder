@@ -155,7 +155,7 @@ def guess_file_type_from_telethon(msg) -> str:
 def apply_markdown_to_text(text: str, entities: list) -> str:
     """
     این تابع متن خام و لیست فرمت‌های تلگرام را می‌گیرد و
-    علامت‌های مارک‌داون (**، __، -- و ...) را به متن اضافه می‌کند.
+    علامت‌های مارک‌داون را به متن اضافه می‌کند.
     """
     if not entities or not text:
         return text
@@ -177,15 +177,21 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             insertions.append((start, "~~"))
             insertions.append((end, "~~"))
         elif isinstance(ent, MessageEntityUnderline):
-            # اضافه شدن پشتیبانی از زیرخط (Underline) با استفاده از --
             insertions.append((start, "--"))
             insertions.append((end, "--"))
         elif isinstance(ent, MessageEntitySpoiler):
             insertions.append((start, "||"))
             insertions.append((end, "||"))
-        elif isinstance(ent, (MessageEntityCode, MessageEntityPre)):
+        elif isinstance(ent, MessageEntityCode):
+            # کد تک خطی (Inline Code)
             insertions.append((start, "`"))
             insertions.append((end, "`"))
+        elif isinstance(ent, MessageEntityPre):
+            # بلوک کد (Code Block) - استفاده از سه تا بک‌تیک
+            # اگر زبان کد مشخص باشد، می‌توان آن را هم اضافه کرد (مثلا ```python)
+            lang = getattr(ent, 'language', '') or ''
+            insertions.append((start, f"```{lang}\n"))
+            insertions.append((end, "\n```"))
         elif isinstance(ent, MessageEntityTextUrl):
             # برای لینک: [متن](لینک)
             insertions.append((start, "["))
