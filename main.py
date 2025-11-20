@@ -162,6 +162,11 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
     
     # لیستی از نقاطی که باید علامت درج شود: (موقعیت، علامت)
     insertions = []
+    
+    # برای جلوگیری از تداخل، لیست را بر اساس اندیس شروع مرتب می‌کنیم
+    # سپس روی آن تکرار می‌کنیم تا تغییرات لازم را در insertions اعمال کنیم.
+    entities.sort(key=lambda ent: ent.offset)
+    
     for ent in entities:
         start = ent.offset
         end = ent.offset + ent.length
@@ -188,10 +193,25 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             insertions.append((end, "`"))
         elif isinstance(ent, MessageEntityPre):
             # بلوک کد (Code Block) - استفاده از سه تا بک‌تیک
-            # اگر زبان کد مشخص باشد، می‌توان آن را هم اضافه کرد (مثلا ```python)
             lang = getattr(ent, 'language', '') or ''
-            insertions.append((start, f"```{lang}\n"))
-            insertions.append((end, "\n```"))
+            
+            # برای جلوگیری از خطای INVALID_INPUT:
+            # - تگ باز را به همراه خط جدید در ابتدای متن کد درج می‌کنیم.
+            # - تگ بسته را به همراه خط جدید در انتهای متن کد درج می‌کنیم.
+            # این کاراکترهای اضافی (```\n و \n```) باعث جابجایی اندیس‌های بعدی می‌شوند،
+            # اما با مرتب‌سازی نزولی `insertions` و درج از انتها به ابتدا، مشکل اندیس‌ها حل می‌شود.
+            
+            # در تلگرام، MessageEntityPre دقیقاً روی متن داخل بلوک کد قرار می‌گیرد و شامل `\n`های آغاز و پایان نیست.
+            # ما باید این `\n`ها را برای رعایت فرمت مارک‌داون بلوک کد (```text```) خودمان اضافه کنیم.
+            
+            # تگ باز
+            open_tag = f"```{lang}\n"
+            insertions.append((start, open_tag))
+            
+            # تگ بسته
+            close_tag = "\n```"
+            insertions.append((end, close_tag)) 
+            
         elif isinstance(ent, MessageEntityTextUrl):
             # برای لینک: [متن](لینک)
             insertions.append((start, "["))
@@ -201,6 +221,7 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
              insertions.append((start, "> "))
     
     # مرتب‌سازی نزولی (از آخر به اول) برای جلوگیری از بهم ریختن ایندکس‌ها
+    # این گام برای اطمینان از صحت اندیس‌ها بعد از درج کاراکترهای جدید ضروری است.
     insertions.sort(key=lambda x: x[0], reverse=True)
     
     res_text = text
@@ -246,7 +267,10 @@ async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubik
             logger.warning("No rubika message id returned for TG %s/%s", tg_chat_id, tg_message_id)
         return rub_mid
     except Exception as e:
-        logger.exception("Failed to forward to rubika for tg %s/%s: %s", tg_chat_id, tg_message_id, e)
+        # در اینجا خطای APIException باید مدیریت شود.
+        logger.error("Failed to forward to rubika for tg %s/%s: %s", tg_chat_id, tg_message_id, e)
+        # برای اشکال‌زدایی بهتر، Stack Trace را هم لاگ می‌کنیم.
+        logger.exception("Detailed error trace for failed forwarding")
         return None
 
 
@@ -262,9 +286,12 @@ async def new_message_handler(event):
             return
 
         # تبدیل متن به فرمت مارک‌داون
-        markdown_text = apply_markdown_to_text(msg.message, msg.entities)
+        if msg.message:
+            markdown_text = apply_markdown_to_text(msg.message, msg.entities)
+        else:
+            markdown_text = ""
         
-        if msg.message and not msg.media:
+        if (msg.message or msg.entities) and not msg.media:
             await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=markdown_text)
             return
 
@@ -272,7 +299,7 @@ async def new_message_handler(event):
             tmpdir = tempfile.mkdtemp()
             try:
                 file_path = await msg.download_media(file=tmpdir)
-                caption = apply_markdown_to_text(msg.message or "", msg.entities) or None
+                caption = markdown_text or None
                 
                 ftype = guess_file_type_from_telethon(msg)
                 if ftype == "Voice" and not os.path.splitext(file_path)[1]:
