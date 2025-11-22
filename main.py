@@ -160,16 +160,32 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
     if not entities or not text:
         return text
     
+    # 1. شناسایی محدوده‌های "بلاک کد"
+    # اگر متنی داخل بلاک کد باشد، نباید بولد یا لینک شود، وگرنه پارسر خطا می‌دهد.
+    code_ranges = []
+    for ent in entities:
+        if isinstance(ent, MessageEntityPre):
+            code_ranges.append((ent.offset, ent.offset + ent.length))
+            
+    def is_inside_code_block(pos):
+        for start, end in code_ranges:
+            # اگر پوزیشن دقیقاً داخل بازه باشد (نه لبه‌ها)
+            if start <= pos < end: 
+                return True
+        return False
+
     # لیستی از نقاطی که باید علامت درج شود: (موقعیت، علامت)
     insertions = []
-    
-    # مرتب‌سازی برای اطمینان از ترتیب صحیح پردازش
-    entities.sort(key=lambda ent: ent.offset)
     
     for ent in entities:
         start = ent.offset
         end = ent.offset + ent.length
         
+        # اگر این موجودیت خودش بلاک کد نیست، ولی داخل یک بلاک کد قرار گرفته، آن را نادیده بگیر.
+        # این کار جلوی خطای تداخل ایندکس‌ها را می‌گیرد.
+        if not isinstance(ent, MessageEntityPre) and is_inside_code_block(start):
+            continue
+
         # فقط فرمت‌هایی که روبیکا پشتیبانی می‌کند
         if isinstance(ent, MessageEntityBold):
             insertions.append((start, "**"))
@@ -192,14 +208,9 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             insertions.append((end, "`"))
         elif isinstance(ent, MessageEntityPre):
             # بلوک کد (Code Block)
-            # اصلاح مهم: حذف نام زبان (lang) از تگ باز
-            # روبیکا نام زبان را در تگ ``` پشتیبانی نمی‌کند و باعث خطای INVALID_INPUT می‌شود
-            
-            open_tag = "```\n"  # فقط تگ خالی + خط جدید
-            insertions.append((start, open_tag))
-            
-            close_tag = "\n```"
-            insertions.append((end, close_tag)) 
+            # اصلاح حیاتی: حذف \n دستی و استفاده از تگ ساده
+            insertions.append((start, "```"))
+            insertions.append((end, "```")) 
             
         elif isinstance(ent, MessageEntityTextUrl):
             # برای لینک: [متن](لینک)
@@ -210,6 +221,7 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
              insertions.append((start, "> "))
     
     # مرتب‌سازی نزولی (از آخر به اول) برای جلوگیری از بهم ریختن ایندکس‌ها هنگام درج
+    # اگر دو ایندکس برابر بودند، ترتیب درج مهم است، اما فعلا ساده مرتب می‌کنیم
     insertions.sort(key=lambda x: x[0], reverse=True)
     
     res_text = text
