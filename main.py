@@ -54,8 +54,6 @@ MAP = {
     str(int(TG_CHANNEL_2)): RUBIKA_CHANNEL_2,
 }
 
-# دیکشنری برای نگهداری پیام‌های در حال آپلود
-# Key: (tg_chat_id, tg_message_id), Value: asyncio.Event
 PENDING_UPLOADS: Dict[Tuple[str, int], asyncio.Event] = {}
 
 # ----------------- clients -----------------
@@ -153,14 +151,65 @@ def guess_file_type_from_telethon(msg) -> str:
     return "File"
 
 
+# --- تابع بسیار مهم برای اصلاح ایندکس‌ها ---
+def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, int]:
+    """
+    تبدیل آفست‌های UTF-16 (استاندارد تلگرام) به ایندکس‌های رشته پایتون.
+    این تابع اختلاف شمارش ایموجی‌ها و کاراکترهای خاص را حل می‌کند.
+    """
+    if tg_offset == 0 and tg_length == 0:
+        return 0, 0
+        
+    utf16_pos = 0
+    py_start = -1
+    py_end = -1
+    
+    # اگر آفست صفر است، شروع پایتون هم صفر است
+    if tg_offset == 0:
+        py_start = 0
+        
+    # حلقه روی تک تک کاراکترهای پایتون
+    for i, char in enumerate(text):
+        # اگر به نقطه شروع تلگرام رسیدیم، ایندکس پایتون را ذخیره کن
+        if utf16_pos == tg_offset:
+            py_start = i
+            
+        # اگر به نقطه پایان رسیدیم
+        if utf16_pos == (tg_offset + tg_length):
+            py_end = i
+            break
+            
+        # محاسبه طول کاراکتر در UTF-16
+        # کاراکترهای معمولی (BMP) طول 1 دارند، ایموجی‌ها طول 2 دارند
+        char_len = 2 if ord(char) > 0xFFFF else 1
+        utf16_pos += char_len
+        
+    # هندل کردن حالتی که تا آخر متن رفته
+    if py_start == -1 and utf16_pos == tg_offset:
+        py_start = len(text)
+    if py_end == -1: 
+        # اگر حلقه تمام شد و هنوز به پایان نرسیدیم (معمولاً یعنی تا آخر متن)
+        py_end = len(text)
+        
+    return py_start, py_end
+
+
 def apply_markdown_to_text(text: str, entities: list) -> str:
     if not entities or not text:
         return text
     
-    code_ranges = []
+    # 1. محاسبه ایندکس‌های صحیح برای همه موجودیت‌ها
+    # لیستی از (start, end, entity)
+    corrected_entities = []
     for ent in entities:
-        if isinstance(ent, MessageEntityPre):
-            code_ranges.append((ent.offset, ent.offset + ent.length))
+        start, end = get_python_indices(text, ent.offset, ent.length)
+        corrected_entities.append({'start': start, 'end': end, 'ent': ent})
+
+    # 2. شناسایی محدوده‌های "بلاک کد" با ایندکس‌های صحیح پایتون
+    code_ranges = []
+    for item in corrected_entities:
+        if isinstance(item['ent'], MessageEntityPre):
+            code_ranges.append((item['start'], item['end']))
             
     def is_inside_code_block(pos):
         for start, end in code_ranges:
@@ -169,11 +218,12 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         return False
 
     insertions = []
-    entities.sort(key=lambda ent: ent.offset)
-
-    for ent in entities:
-        start = ent.offset
-        end = ent.offset + ent.length
+    
+    # 3. پردازش موجودیت‌ها با ایندکس‌های صحیح
+    for item in corrected_entities:
+        ent = item['ent']
+        start = item['start']
+        end = item['end']
         
         if not isinstance(ent, MessageEntityPre) and is_inside_code_block(start):
             continue
@@ -205,6 +255,7 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         elif isinstance(ent, MessageEntityBlockquote):
              insertions.append((start, "> "))
     
+    # مرتب‌سازی نزولی برای درج صحیح
     insertions.sort(key=lambda x: x[0], reverse=True)
     
     res_text = text
@@ -262,9 +313,7 @@ async def new_message_handler(event):
         if not rubika_target:
             return
 
-        # ایجاد کلید منحصر به فرد برای پیام
         pending_key = (tg_chat_id, msg.id)
-        # ایجاد رویداد انتظار
         upload_event = asyncio.Event()
         PENDING_UPLOADS[pending_key] = upload_event
 
@@ -298,8 +347,6 @@ async def new_message_handler(event):
                     except Exception:
                         pass
         finally:
-            # در نهایت، چه آپلود موفق باشد چه خطا، رویداد را آزاد می‌کنیم
-            # تا اگر ادیت منتظر است، از حالت انتظار خارج شود
             upload_event.set()
             PENDING_UPLOADS.pop(pending_key, None)
             
@@ -313,21 +360,15 @@ async def edited_message_handler(event):
         msg = event.message
         tg_chat_id = str(event.chat_id)
         
-        # 1. ابتدا چک می‌کنیم آیا پیام در دیتابیس هست؟
         mapping = get_mapping(tg_chat_id, msg.id)
-        
-        # 2. اگر نبود، چک می‌کنیم آیا در حال آپلود است؟
         if not mapping:
             pending_key = (tg_chat_id, msg.id)
             if pending_key in PENDING_UPLOADS:
-                logger.info("Edit received for pending upload %s/%s. Waiting for upload to finish...", tg_chat_id, msg.id)
-                # منتظر می‌مانیم تا آپلود تمام شود
+                logger.info("Edit received for pending upload %s/%s. Waiting...", tg_chat_id, msg.id)
                 await PENDING_UPLOADS[pending_key].wait()
-                # دوباره چک می‌کنیم
                 mapping = get_mapping(tg_chat_id, msg.id)
         
         if not mapping:
-            # اگر بعد از انتظار هم پیدا نشد (یعنی آپلود فیل شده)، بیخیال می‌شویم
             return
 
         rubika_chat_id, rubika_msg_id = mapping
@@ -352,8 +393,6 @@ async def deleted_message_handler(event):
         for mid in deleted_ids:
             mapping = get_mapping(tg_chat_id, mid)
             if not mapping:
-                # شاید در حال آپلود بوده و قبل از ذخیره شدن پاک شده
-                # اینجا هم می‌توان منتظر ماند اما معمولا حذف اولویت کمتری نسبت به ادیت دارد
                 continue
             rubika_chat_id, rubika_msg_id = mapping
             try:
