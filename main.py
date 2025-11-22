@@ -5,7 +5,7 @@ import logging
 import tempfile
 import sqlite3
 import importlib.metadata
-from typing import Optional, Tuple, Any, Dict, List
+from typing import Optional, Tuple, Any
 
 from aiohttp import web
 from telethon import TelegramClient, events
@@ -13,12 +13,10 @@ from telethon.sessions import StringSession
 from telethon.tl.types import (
     MessageEntityBold, MessageEntityItalic, MessageEntityStrike, 
     MessageEntityUnderline, MessageEntitySpoiler, MessageEntityCode, 
-    MessageEntityPre, MessageEntityTextUrl, MessageEntityBlockquote,
-    MessageEntityUrl, MessageEntityMention, MessageEntityEmail
+    MessageEntityPre, MessageEntityTextUrl, MessageEntityBlockquote
 )
 
-import rubpy
-from rubpy.bot import BotClient
+from rubpy import BotClient
 from rubpy.bot.exceptions import APIException
 from rubpy.enums import ParseMode
 
@@ -160,8 +158,7 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
     if not entities or not text:
         return text
     
-    # 1. شناسایی محدوده‌های "بلاک کد"
-    # اگر متنی داخل بلاک کد باشد، نباید بولد یا لینک شود، وگرنه پارسر خطا می‌دهد.
+    # 1. شناسایی محدوده‌های "بلاک کد" برای جلوگیری از تداخل
     code_ranges = []
     for ent in entities:
         if isinstance(ent, MessageEntityPre):
@@ -169,24 +166,23 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             
     def is_inside_code_block(pos):
         for start, end in code_ranges:
-            # اگر پوزیشن دقیقاً داخل بازه باشد (نه لبه‌ها)
             if start <= pos < end: 
                 return True
         return False
 
-    # لیستی از نقاطی که باید علامت درج شود: (موقعیت، علامت)
     insertions = []
     
+    # مرتب‌سازی بر اساس آفست برای پردازش صحیح
+    entities.sort(key=lambda ent: ent.offset)
+
     for ent in entities:
         start = ent.offset
         end = ent.offset + ent.length
         
-        # اگر این موجودیت خودش بلاک کد نیست، ولی داخل یک بلاک کد قرار گرفته، آن را نادیده بگیر.
-        # این کار جلوی خطای تداخل ایندکس‌ها را می‌گیرد.
+        # اگر فرمت داخل یک بلاک کد بود، آن را نادیده می‌گیریم
         if not isinstance(ent, MessageEntityPre) and is_inside_code_block(start):
             continue
 
-        # فقط فرمت‌هایی که روبیکا پشتیبانی می‌کند
         if isinstance(ent, MessageEntityBold):
             insertions.append((start, "**"))
             insertions.append((end, "**"))
@@ -203,25 +199,19 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             insertions.append((start, "||"))
             insertions.append((end, "||"))
         elif isinstance(ent, MessageEntityCode):
-            # کد تک خطی (Inline Code)
             insertions.append((start, "`"))
             insertions.append((end, "`"))
         elif isinstance(ent, MessageEntityPre):
-            # بلوک کد (Code Block)
-            # اصلاح حیاتی: حذف \n دستی و استفاده از تگ ساده
+            # استفاده از تگ ساده کد بلاک بدون نام زبان برای سازگاری با روبیکا
             insertions.append((start, "```"))
             insertions.append((end, "```")) 
-            
         elif isinstance(ent, MessageEntityTextUrl):
-            # برای لینک: [متن](لینک)
             insertions.append((start, "["))
             insertions.append((end, f"]({ent.url})"))
         elif isinstance(ent, MessageEntityBlockquote):
-             # برای نقل قول
              insertions.append((start, "> "))
     
-    # مرتب‌سازی نزولی (از آخر به اول) برای جلوگیری از بهم ریختن ایندکس‌ها هنگام درج
-    # اگر دو ایندکس برابر بودند، ترتیب درج مهم است، اما فعلا ساده مرتب می‌کنیم
+    # مرتب‌سازی نزولی برای درج بدون به هم ریختن ایندکس‌ها
     insertions.sort(key=lambda x: x[0], reverse=True)
     
     res_text = text
@@ -234,15 +224,13 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
 
 async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str):
     try:
-        # ارسال با parse_mode='Markdown'
         res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=caption, parse_mode=ParseMode.MARKDOWN)
         return _extract_message_id(res)
     except APIException as e:
         msg = getattr(e, "message", str(e))
-        logger.warning("send_file primary type %s failed: %s. Trying fallback to 'File'...", primary_type, msg)
+        logger.warning("send_file primary type %s failed: %s. Trying fallback...", primary_type, msg)
         try:
             file_name = os.path.basename(local_path)
-            # فال‌بک هم با مارک‌داون
             res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=caption, file_name=file_name, parse_mode=ParseMode.MARKDOWN)
             return _extract_message_id(res2)
         except Exception as e2:
@@ -267,8 +255,7 @@ async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubik
             logger.warning("No rubika message id returned for TG %s/%s", tg_chat_id, tg_message_id)
         return rub_mid
     except Exception as e:
-        logger.error("Failed to forward to rubika for tg %s/%s: %s", tg_chat_id, tg_message_id, e)
-        logger.exception("Detailed error trace for failed forwarding")
+        logger.exception("Failed to forward to rubika for tg %s/%s: %s", tg_chat_id, tg_message_id, e)
         return None
 
 
@@ -280,10 +267,8 @@ async def new_message_handler(event):
         tg_chat_id = str(event.chat_id)
         rubika_target = MAP.get(tg_chat_id)
         if not rubika_target:
-            logger.warning("No mapping for tg chat %s", tg_chat_id)
             return
 
-        # تبدیل متن به فرمت مارک‌داون
         if msg.message:
             markdown_text = apply_markdown_to_text(msg.message, msg.entities)
         else:
@@ -324,7 +309,6 @@ async def edited_message_handler(event):
         tg_chat_id = str(event.chat_id)
         mapping = get_mapping(tg_chat_id, msg.id)
         if not mapping:
-            logger.info("Edited message mapping not found for %s/%s — ignoring", tg_chat_id, msg.id)
             return
         rubika_chat_id, rubika_msg_id = mapping
         
@@ -348,10 +332,8 @@ async def deleted_message_handler(event):
         for mid in deleted_ids:
             mapping = get_mapping(tg_chat_id, mid)
             if not mapping:
-                logger.info("Deleted message mapping not found for %s/%s — ignoring", tg_chat_id, mid)
                 continue
             rubika_chat_id, rubika_msg_id = mapping
-            logger.info("Deleting rubika message %s from chat %s (origin tg %s/%s)", rubika_msg_id, rubika_chat_id, tg_chat_id, mid)
             try:
                 await rb.delete_message(chat_id=rubika_chat_id, message_id=rubika_msg_id)
                 delete_mapping(tg_chat_id, mid)
@@ -367,25 +349,21 @@ async def start_services():
         version = importlib.metadata.version("rubpy")
         logger.info(f"Starting rubpy client (Version: {version})...")
     except:
-        logger.info("Starting rubpy client (Unknown Version)...")
+        logger.info("Starting rubpy client...")
         
     await rb.start()
-
-    logger.info("Starting Telethon client...")
     await tg_client.start()
 
     app = web.Application()
-
     async def health(request):
         return web.Response(text="OK")
-
     app.add_routes([web.get("/health", health)])
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
     logger.info("Health endpoint started on port %s", PORT)
-
+    
     logger.info("Running until disconnected...")
     await tg_client.run_until_disconnected()
 
@@ -394,13 +372,12 @@ def main():
     try:
         asyncio.run(start_services())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Shutting down...")
+        pass
     finally:
         try:
             asyncio.run(rb.close())
         except Exception:
             pass
-
 
 if __name__ == "__main__":
     main()
