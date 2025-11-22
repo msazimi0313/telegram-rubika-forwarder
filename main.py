@@ -5,7 +5,7 @@ import logging
 import tempfile
 import sqlite3
 import importlib.metadata
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, Dict
 
 from aiohttp import web
 from telethon import TelegramClient, events
@@ -48,11 +48,15 @@ for r in required:
     if not os.environ.get(r):
         raise SystemExit(f"Missing required env var: {r}")
 
-# ----------------- mapping -----------------
+# ----------------- Global State -----------------
 MAP = {
     str(int(TG_CHANNEL_1)): RUBIKA_CHANNEL_1,
     str(int(TG_CHANNEL_2)): RUBIKA_CHANNEL_2,
 }
+
+# دیکشنری برای نگهداری پیام‌های در حال آپلود
+# Key: (tg_chat_id, tg_message_id), Value: asyncio.Event
+PENDING_UPLOADS: Dict[Tuple[str, int], asyncio.Event] = {}
 
 # ----------------- clients -----------------
 tg_client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
@@ -149,16 +153,10 @@ def guess_file_type_from_telethon(msg) -> str:
     return "File"
 
 
-# --- تابع تبدیل متن و Entityها به فرمت Markdown ---
 def apply_markdown_to_text(text: str, entities: list) -> str:
-    """
-    این تابع متن خام و لیست فرمت‌های تلگرام را می‌گیرد و
-    علامت‌های مارک‌داون را به متن اضافه می‌کند.
-    """
     if not entities or not text:
         return text
     
-    # 1. شناسایی محدوده‌های "بلاک کد" برای جلوگیری از تداخل
     code_ranges = []
     for ent in entities:
         if isinstance(ent, MessageEntityPre):
@@ -171,15 +169,12 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         return False
 
     insertions = []
-    
-    # مرتب‌سازی بر اساس آفست برای پردازش صحیح
     entities.sort(key=lambda ent: ent.offset)
 
     for ent in entities:
         start = ent.offset
         end = ent.offset + ent.length
         
-        # اگر فرمت داخل یک بلاک کد بود، آن را نادیده می‌گیریم
         if not isinstance(ent, MessageEntityPre) and is_inside_code_block(start):
             continue
 
@@ -202,7 +197,6 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             insertions.append((start, "`"))
             insertions.append((end, "`"))
         elif isinstance(ent, MessageEntityPre):
-            # استفاده از تگ ساده کد بلاک بدون نام زبان برای سازگاری با روبیکا
             insertions.append((start, "```"))
             insertions.append((end, "```")) 
         elif isinstance(ent, MessageEntityTextUrl):
@@ -211,7 +205,6 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         elif isinstance(ent, MessageEntityBlockquote):
              insertions.append((start, "> "))
     
-    # مرتب‌سازی نزولی برای درج بدون به هم ریختن ایندکس‌ها
     insertions.sort(key=lambda x: x[0], reverse=True)
     
     res_text = text
@@ -269,35 +262,47 @@ async def new_message_handler(event):
         if not rubika_target:
             return
 
-        if msg.message:
-            markdown_text = apply_markdown_to_text(msg.message, msg.entities)
-        else:
-            markdown_text = ""
-        
-        if (msg.message or msg.entities) and not msg.media:
-            await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=markdown_text)
-            return
+        # ایجاد کلید منحصر به فرد برای پیام
+        pending_key = (tg_chat_id, msg.id)
+        # ایجاد رویداد انتظار
+        upload_event = asyncio.Event()
+        PENDING_UPLOADS[pending_key] = upload_event
 
-        if msg.media:
-            tmpdir = tempfile.mkdtemp()
-            try:
-                file_path = await msg.download_media(file=tmpdir)
-                caption = markdown_text or None
-                
-                ftype = guess_file_type_from_telethon(msg)
-                if ftype == "Voice" and not os.path.splitext(file_path)[1]:
-                    new_path = file_path + ".ogg"
-                    os.rename(file_path, new_path)
-                    file_path = new_path
-                
-                await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype)
-            finally:
+        try:
+            if msg.message:
+                markdown_text = apply_markdown_to_text(msg.message, msg.entities)
+            else:
+                markdown_text = ""
+            
+            if (msg.message or msg.entities) and not msg.media:
+                await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=markdown_text)
+                return
+
+            if msg.media:
+                tmpdir = tempfile.mkdtemp()
                 try:
-                    if file_path and os.path.exists(file_path):
-                        os.remove(file_path)
-                except Exception:
-                    pass
-            return
+                    file_path = await msg.download_media(file=tmpdir)
+                    caption = markdown_text or None
+                    
+                    ftype = guess_file_type_from_telethon(msg)
+                    if ftype == "Voice" and not os.path.splitext(file_path)[1]:
+                        new_path = file_path + ".ogg"
+                        os.rename(file_path, new_path)
+                        file_path = new_path
+                    
+                    await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype)
+                finally:
+                    try:
+                        if file_path and os.path.exists(file_path):
+                            os.remove(file_path)
+                    except Exception:
+                        pass
+        finally:
+            # در نهایت، چه آپلود موفق باشد چه خطا، رویداد را آزاد می‌کنیم
+            # تا اگر ادیت منتظر است، از حالت انتظار خارج شود
+            upload_event.set()
+            PENDING_UPLOADS.pop(pending_key, None)
+            
     except Exception as e:
         logger.exception("Error in new_message_handler: %s", e)
 
@@ -307,9 +312,24 @@ async def edited_message_handler(event):
     try:
         msg = event.message
         tg_chat_id = str(event.chat_id)
+        
+        # 1. ابتدا چک می‌کنیم آیا پیام در دیتابیس هست؟
         mapping = get_mapping(tg_chat_id, msg.id)
+        
+        # 2. اگر نبود، چک می‌کنیم آیا در حال آپلود است؟
         if not mapping:
+            pending_key = (tg_chat_id, msg.id)
+            if pending_key in PENDING_UPLOADS:
+                logger.info("Edit received for pending upload %s/%s. Waiting for upload to finish...", tg_chat_id, msg.id)
+                # منتظر می‌مانیم تا آپلود تمام شود
+                await PENDING_UPLOADS[pending_key].wait()
+                # دوباره چک می‌کنیم
+                mapping = get_mapping(tg_chat_id, msg.id)
+        
+        if not mapping:
+            # اگر بعد از انتظار هم پیدا نشد (یعنی آپلود فیل شده)، بیخیال می‌شویم
             return
+
         rubika_chat_id, rubika_msg_id = mapping
         
         new_markdown_text = apply_markdown_to_text(msg.message or "", msg.entities)
@@ -332,6 +352,8 @@ async def deleted_message_handler(event):
         for mid in deleted_ids:
             mapping = get_mapping(tg_chat_id, mid)
             if not mapping:
+                # شاید در حال آپلود بوده و قبل از ذخیره شدن پاک شده
+                # اینجا هم می‌توان منتظر ماند اما معمولا حذف اولویت کمتری نسبت به ادیت دارد
                 continue
             rubika_chat_id, rubika_msg_id = mapping
             try:
