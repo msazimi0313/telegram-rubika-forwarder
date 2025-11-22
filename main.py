@@ -183,7 +183,7 @@ def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, 
     return py_start, py_end
 
 
-# --- تابع جدید با قابلیت پشتیبانی از Nested Markdown ---
+# --- تابع نهایی با قابلیت پشتیبانی صحیح از Nested Markdown ---
 def apply_markdown_to_text(text: str, entities: list) -> str:
     if not entities or not text:
         return text
@@ -208,6 +208,7 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             
     def is_inside_code_block(pos):
         for start, end in code_ranges:
+            # اگر نقطه‌ای دقیقاً داخل یک بلاک کد باشد (نه لبه‌ها)
             if start <= pos < end: 
                 return True
         return False
@@ -247,11 +248,10 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             start_tag = "["
             end_tag = f"]({ent.url})"
         elif isinstance(ent, MessageEntityBlockquote):
-            # نقل قول معمولا پایان ندارد و کل خط را می‌گیرد
-            # ما یک طول بسیار زیاد فرضی در نظر می‌گیریم تا همیشه بیرونی‌ترین لایه باشد
+            # نقل قول طول بسیار زیاد فرضی دارد تا همیشه بیرونی‌ترین لایه باشد
             length = 999999 
             start_tag = "> "
-            end_tag = "" # پایان ندارد
+            end_tag = "" # نقل قول تگ پایان ندارد
 
         if start_tag:
             # (Text, Priority/Length, Type)
@@ -260,7 +260,6 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             ops[end].append((end_tag, length, "end"))
 
     # 4. اعمال تغییرات روی متن (از آخر به اول)
-    # مرتب‌سازی ایندکس‌ها به صورت نزولی تا تغییرات ایندکس‌های قبلی را خراب نکند
     sorted_indices = sorted(ops.keys(), reverse=True)
     
     res_text = text
@@ -275,19 +274,16 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
 
         # --- منطق مرتب‌سازی تو در تو (Nesting Logic) ---
         
-        # برای تگ‌های پایان: اول باید لایه‌های داخلی (کوچکتر) بسته شوند، بعد لایه‌های بیرونی.
-        # بنابراین بر اساس طول صعودی مرتب می‌کنیم.
-        # مثال: **||متن||** -> در پایان، اول || (طول ۱۰) بسته میشه یا ** (طول ۴)؟
-        # ما میخوایم بشه **||متن||** -> یعنی اول || بسته شده بعد **.
-        # پس باید تگ داخلی اول بیاد.
-        ends.sort(key=lambda x: x[1]) # Small length first (Inner close first)
+        # تگ‌های پایان: اول باید لایه‌های داخلی (طول کمتر) بسته شوند.
+        # مثال: در **__متن__**، اول __ بسته می‌شود بعد **.
+        ends.sort(key=lambda x: x[1]) 
 
-        # برای تگ‌های شروع: اول باید لایه‌های داخلی (کوچکتر) باز شوند، بعد بیرونی‌ها
-        # تا وقتی متن درج میشه، تگ بیرونی بره عقب‌تر.
-        # مثال: متن. درج ** -> **متن. درج || -> ||**متن.
-        starts.sort(key=lambda x: x[1]) # Small length first (Inner open first)
+        # تگ‌های شروع: اول باید لایه‌های بیرونی (طول بیشتر) باز شوند.
+        # مثال: در **__متن__**، اول ** باز می‌شود بعد __.
+        # این تغییر کلیدی برای پشتیبانی از Nested Markdown است.
+        starts.sort(key=lambda x: x[1], reverse=True)
 
-        # اعمال تگ‌های پایان (اول پایان‌ها را می‌زنیم تا تداخل با شروع بعدی نداشته باشد)
+        # اعمال تگ‌های پایان (اول تگ‌ها بسته می‌شوند تا با شروع بعدی تداخل نکنند)
         for tag, _, _ in ends:
             res_text = res_text[:idx] + tag + res_text[idx:]
             
