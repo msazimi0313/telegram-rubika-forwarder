@@ -180,7 +180,24 @@ def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, 
     return py_start, py_end
 
 
-# --- تابع پیشرفته برای هندل کردن مارک‌داون‌های تودرتو ---
+def get_entity_priority(entity):
+    """
+    اولویت‌بندی تگ‌ها برای اطمینان از ترتیب صحیح تودرتویی.
+    اعداد کمتر به معنی 'بیرونی‌تر' بودن در نظر گرفته می‌شوند وقتی طول‌ها برابر است.
+    """
+    if isinstance(entity, MessageEntityBold): return 1
+    if isinstance(entity, MessageEntityItalic): return 2
+    if isinstance(entity, MessageEntityStrike): return 3
+    if isinstance(entity, MessageEntityUnderline): return 4
+    if isinstance(entity, MessageEntitySpoiler): return 5
+    if isinstance(entity, MessageEntityCode): return 6
+    if isinstance(entity, MessageEntityPre): return 7
+    if isinstance(entity, MessageEntityTextUrl): return 8
+    if isinstance(entity, MessageEntityBlockquote): return 9
+    return 10
+
+
+# --- تابع پیشرفته و اصلاح شده برای هندل کردن مارک‌داون‌های تودرتو ---
 def apply_markdown_to_text(text: str, entities: list) -> str:
     if not entities or not text:
         return text
@@ -193,7 +210,6 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         corrected_entities.append({'start': start, 'end': end, 'length': length, 'ent': ent})
 
     # 2. شناسایی محدوده‌های "بلاک کد"
-    # طبق خواسته شما، داخل بلاک کد (Pre) نباید تغییری ایجاد شود
     code_ranges = []
     for item in corrected_entities:
         if isinstance(item['ent'], MessageEntityPre):
@@ -205,12 +221,6 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
                 return True
         return False
 
-    # لیست عملیات درج (Insertions)
-    # ساختار: (Index, Is_Start, Rank, Text)
-    # Is_Start: 1 برای شروع تگ، 0 برای پایان تگ (برای اینکه پایان‌ها زودتر از شروع‌ها در یک نقطه پردازش شوند)
-    # Rank: اولویت برای تودرتویی صحیح. 
-    #   - برای شروع: طول منفی (تگ کوتاه‌تر زودتر اعمال شود تا برود داخل)
-    #   - برای پایان: طول مثبت (تگ بلندتر زودتر اعمال شود تا بیاید بیرون)
     insertions = []
     
     for item in corrected_entities:
@@ -219,7 +229,6 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         end = item['end']
         length = item['length']
         
-        # اگر فرمت داخل یک بلاک کد بود، نادیده می‌گیریم (مگر اینکه خودش بلاک کد باشد)
         if not isinstance(ent, MessageEntityPre) and is_inside_code_block(start):
             continue
 
@@ -248,27 +257,40 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             tag_end = "" 
 
         if tag_start:
-            # فرمول جادویی سورت کردن برای نستینگ صحیح:
-            # 1. Index: از آخر به اول متن (Descending)
-            # 2. Is_Start: اول پایان‌ها (0) بعد شروع‌ها (1)
-            # 3. Rank: 
-            #    - شروع: هر چه طول بیشتر باشد، باید دیرتر اعمال شود (تا بیرونی‌تر شود). پس طول منفی.
-            #    - پایان: هر چه طول بیشتر باشد، باید زودتر اعمال شود (تا بیرونی‌تر شود). پس طول مثبت.
+            priority = get_entity_priority(ent)
             
-            insertions.append((start, 1, -length, tag_start))
+            # --- منطق سورتینگ جدید برای حل مشکل ترتیب تگ‌ها ---
+            # ساختار کلید سورت: (Index, Is_Start, Length_Factor, Priority_Factor, Tag_String)
+            # هدف: اولویت‌بندی به شکلی که تگ‌های بیرونی زودتر باز شوند و دیرتر بسته شوند.
+            
+            # برای شروع تگ (Is_Start=1):
+            # - اولویت (Priority): برای باز شدن، تگ با اولویت عدد کمتر (مثلا بولد=1) باید زودتر پردازش شود (بیرونی باشد)
+            #   اما چون لیست را Descending (نزولی) سورت می‌کنیم، آیتم‌های 'بزرگتر' در لیست اول می‌آیند و اول پردازش می‌شوند.
+            #   برای اینکه تگ بیرونی (مثلا A) بعد از تگ درونی (مثلا B) در لیست قرار بگیرد (تا اول B پردازش شود و متن بشود B... سپس A پردازش شود و متن بشود AB...)
+            #   باید A 'کوچکتر' از B باشد.
+            #   پس Priority کمتر (1) باید باعث کوچکتر شدن شود. (1 < 2). این درست است.
+            # - طول (Length): تگ بلندتر باید بیرونی باشد. پس باید کوچکتر باشد. (-length).
+            
+            insertions.append((start, 1, -length, priority, tag_start))
+            
             if tag_end:
-                insertions.append((end, 0, length, tag_end))
+                # برای پایان تگ (Is_Start=0):
+                # - تگ بیرونی (A) باید دیرتر از تگ درونی (B) بسته شود. -> ... </B></A>
+                #   یعنی در لیست پردازش، اول باید A باشد (درج </A>) و بعد B (درج </B>).
+                #   یعنی A باید 'بزرگتر' از B باشد (در سورت نزولی).
+                #   A (Priority 1) باید بزرگتر از B (Priority 2) شود؟
+                #   پس باید از منفی اولویت استفاده کنیم: -1 > -2.
+                
+                insertions.append((end, 0, length, -priority, tag_end))
     
-    # مرتب‌سازی نزولی (از بزرگ به کوچک)
-    # پایتون تاپل‌ها را به ترتیب ایندکس‌ها مقایسه می‌کند
+    # مرتب‌سازی نزولی
     insertions.sort(reverse=True)
     
     res_text = text
     for item in insertions:
         index = item[0]
-        string_to_insert = item[3]
+        string_to_insert = item[4] # ایندکس 4 رشته تگ است
         
-        # اطمینان از صحت ایندکس
         if 0 <= index <= len(res_text):
             res_text = res_text[:index] + string_to_insert + res_text[index:]
             
