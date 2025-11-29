@@ -234,6 +234,7 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
 
         tag_start = ""
         tag_end = ""
+        priority = get_entity_priority(ent)
         
         if isinstance(ent, MessageEntityBold):
             tag_start, tag_end = "**", "**"
@@ -255,19 +256,24 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         elif isinstance(ent, MessageEntityBlockquote):
             tag_start = "> "
             tag_end = "" 
-            # هندل کردن خطوط جدید در نقل قول چند خطی
-            # متن داخل این نقل قول را بررسی می‌کنیم
+            
+            # FIX 1: جداسازی دو نقل قول متوالی با تزریق یک خط خالی
+            # اگر نقل قول بلافاصله بعد از یک کاراکتر جدید (مثلاً \n) شروع می‌شود، 
+            # باید یک \n اضافی قبل از > تزریق کنیم تا بلوک‌های مارک‌داون جدا شوند.
+            if start > 0 and text[start - 1] == '\n':
+                # اولویت -1 از 0 پایین‌تر است، بنابراین در سورت نزولی (reverse=True)، 
+                # این آیتم بعد از تگ '> ' قرار می‌گیرد اما چون ایندکس‌ها یکسان هستند، 
+                # در نهایت در متن نهایی قبل از '> ' قرار می‌گیرد: "\n> "
+                insertions.append((start, 1, -length, -1, "\n"))
+                
+            # FIX 2: هندل کردن خطوط جدید در نقل قول چند خطی
             entity_text = text[start:end]
             for i, char in enumerate(entity_text):
                 if char == "\n":
-                    # اگر خط جدید پیدا شد، بلافاصله بعد از آن هم یک > اضافه می‌کنیم
-                    # ایندکس جهانی = start + i + 1
-                    # اولویت 0 و طول منفی (مثل تگ شروع) تا بیرونی بماند
-                    insertions.append((start + i + 1, 1, -length, 0, "> "))
+                    # اگر خط جدید داخل نقل قول پیدا شد، بلافاصله بعد از آن هم یک > اضافه می‌کنیم
+                    insertions.append((start + i + 1, 1, -length, priority, "> "))
 
         if tag_start:
-            priority = get_entity_priority(ent)
-            
             # شروع تگ
             insertions.append((start, 1, -length, priority, tag_start))
             
