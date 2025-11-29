@@ -5,8 +5,7 @@ import logging
 import tempfile
 import sqlite3
 import importlib.metadata
-from typing import Optional, Tuple, Any, Dict, List
-from collections import defaultdict
+from typing import Optional, Tuple, Any, Dict
 
 from aiohttp import web
 from telethon import TelegramClient, events
@@ -153,9 +152,7 @@ def guess_file_type_from_telethon(msg) -> str:
 
 
 def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, int]:
-    """
-    تبدیل آفست‌های UTF-16 (استاندارد تلگرام) به ایندکس‌های رشته پایتون.
-    """
+    """تبدیل آفست‌های UTF-16 تلگرام به ایندکس‌های پایتون"""
     if tg_offset == 0 and tg_length == 0:
         return 0, 0
         
@@ -183,24 +180,20 @@ def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, 
     return py_start, py_end
 
 
-# --- تابع نهایی با قابلیت پشتیبانی صحیح از Nested Markdown ---
+# --- تابع پیشرفته برای هندل کردن مارک‌داون‌های تودرتو ---
 def apply_markdown_to_text(text: str, entities: list) -> str:
     if not entities or not text:
         return text
     
-    # 1. محاسبه ایندکس‌های صحیح و ایجاد لیست عملیات
-    # ساختار: {'ent': entity, 'start': int, 'end': int, 'len': int}
+    # 1. محاسبه ایندکس‌های صحیح (رفع مشکل ایموجی و آفست)
     corrected_entities = []
     for ent in entities:
         start, end = get_python_indices(text, ent.offset, ent.length)
-        corrected_entities.append({
-            'ent': ent, 
-            'start': start, 
-            'end': end, 
-            'len': end - start
-        })
+        length = end - start
+        corrected_entities.append({'start': start, 'end': end, 'length': length, 'ent': ent})
 
-    # 2. شناسایی کد بلاک‌ها برای جلوگیری از تداخل
+    # 2. شناسایی محدوده‌های "بلاک کد"
+    # طبق خواسته شما، داخل بلاک کد (Pre) نباید تغییری ایجاد شود
     code_ranges = []
     for item in corrected_entities:
         if isinstance(item['ent'], MessageEntityPre):
@@ -208,89 +201,77 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             
     def is_inside_code_block(pos):
         for start, end in code_ranges:
-            # اگر نقطه‌ای دقیقاً داخل یک بلاک کد باشد (نه لبه‌ها)
             if start <= pos < end: 
                 return True
         return False
 
-    # 3. گروه‌بندی عملیات درج بر اساس ایندکس
-    # Key: Index, Value: List of (text_to_insert, length_priority, type="start/end")
-    ops = defaultdict(list)
-
+    # لیست عملیات درج (Insertions)
+    # ساختار: (Index, Is_Start, Rank, Text)
+    # Is_Start: 1 برای شروع تگ، 0 برای پایان تگ (برای اینکه پایان‌ها زودتر از شروع‌ها در یک نقطه پردازش شوند)
+    # Rank: اولویت برای تودرتویی صحیح. 
+    #   - برای شروع: طول منفی (تگ کوتاه‌تر زودتر اعمال شود تا برود داخل)
+    #   - برای پایان: طول مثبت (تگ بلندتر زودتر اعمال شود تا بیاید بیرون)
+    insertions = []
+    
     for item in corrected_entities:
         ent = item['ent']
         start = item['start']
         end = item['end']
-        length = item['len']
+        length = item['length']
         
-        # اگر داخل کد بلاک است (و خودش کد بلاک نیست)، نادیده بگیر
+        # اگر فرمت داخل یک بلاک کد بود، نادیده می‌گیریم (مگر اینکه خودش بلاک کد باشد)
         if not isinstance(ent, MessageEntityPre) and is_inside_code_block(start):
             continue
 
-        start_tag = None
-        end_tag = None
-
+        tag_start = ""
+        tag_end = ""
+        
         if isinstance(ent, MessageEntityBold):
-            start_tag, end_tag = "**", "**"
+            tag_start, tag_end = "**", "**"
         elif isinstance(ent, MessageEntityItalic):
-            start_tag, end_tag = "__", "__"
+            tag_start, tag_end = "__", "__"
         elif isinstance(ent, MessageEntityStrike):
-            start_tag, end_tag = "~~", "~~"
+            tag_start, tag_end = "~~", "~~"
         elif isinstance(ent, MessageEntityUnderline):
-            start_tag, end_tag = "--", "--"
+            tag_start, tag_end = "--", "--"
         elif isinstance(ent, MessageEntitySpoiler):
-            start_tag, end_tag = "||", "||"
+            tag_start, tag_end = "||", "||"
         elif isinstance(ent, MessageEntityCode):
-            start_tag, end_tag = "`", "`"
+            tag_start, tag_end = "`", "`"
         elif isinstance(ent, MessageEntityPre):
-            start_tag, end_tag = "```", "```"
+            tag_start, tag_end = "```", "```"
         elif isinstance(ent, MessageEntityTextUrl):
-            start_tag = "["
-            end_tag = f"]({ent.url})"
+            tag_start = "["
+            tag_end = f"]({ent.url})"
         elif isinstance(ent, MessageEntityBlockquote):
-            # نقل قول طول بسیار زیاد فرضی دارد تا همیشه بیرونی‌ترین لایه باشد
-            length = 999999 
-            start_tag = "> "
-            end_tag = "" # نقل قول تگ پایان ندارد
+            tag_start = "> "
+            tag_end = "" 
 
-        if start_tag:
-            # (Text, Priority/Length, Type)
-            ops[start].append((start_tag, length, "start"))
-        if end_tag:
-            ops[end].append((end_tag, length, "end"))
-
-    # 4. اعمال تغییرات روی متن (از آخر به اول)
-    sorted_indices = sorted(ops.keys(), reverse=True)
+        if tag_start:
+            # فرمول جادویی سورت کردن برای نستینگ صحیح:
+            # 1. Index: از آخر به اول متن (Descending)
+            # 2. Is_Start: اول پایان‌ها (0) بعد شروع‌ها (1)
+            # 3. Rank: 
+            #    - شروع: هر چه طول بیشتر باشد، باید دیرتر اعمال شود (تا بیرونی‌تر شود). پس طول منفی.
+            #    - پایان: هر چه طول بیشتر باشد، باید زودتر اعمال شود (تا بیرونی‌تر شود). پس طول مثبت.
+            
+            insertions.append((start, 1, -length, tag_start))
+            if tag_end:
+                insertions.append((end, 0, length, tag_end))
+    
+    # مرتب‌سازی نزولی (از بزرگ به کوچک)
+    # پایتون تاپل‌ها را به ترتیب ایندکس‌ها مقایسه می‌کند
+    insertions.sort(reverse=True)
     
     res_text = text
-    for idx in sorted_indices:
-        if idx > len(res_text): continue # Safety check
-
-        actions = ops[idx]
+    for item in insertions:
+        index = item[0]
+        string_to_insert = item[3]
         
-        # تفکیک تگ‌های شروع و پایان در این نقطه
-        ends = [x for x in actions if x[2] == "end"]
-        starts = [x for x in actions if x[2] == "start"]
-
-        # --- منطق مرتب‌سازی تو در تو (Nesting Logic) ---
-        
-        # تگ‌های پایان: اول باید لایه‌های داخلی (طول کمتر) بسته شوند.
-        # مثال: در **__متن__**، اول __ بسته می‌شود بعد **.
-        ends.sort(key=lambda x: x[1]) 
-
-        # تگ‌های شروع: اول باید لایه‌های بیرونی (طول بیشتر) باز شوند.
-        # مثال: در **__متن__**، اول ** باز می‌شود بعد __.
-        # این تغییر کلیدی برای پشتیبانی از Nested Markdown است.
-        starts.sort(key=lambda x: x[1], reverse=True)
-
-        # اعمال تگ‌های پایان (اول تگ‌ها بسته می‌شوند تا با شروع بعدی تداخل نکنند)
-        for tag, _, _ in ends:
-            res_text = res_text[:idx] + tag + res_text[idx:]
+        # اطمینان از صحت ایندکس
+        if 0 <= index <= len(res_text):
+            res_text = res_text[:index] + string_to_insert + res_text[index:]
             
-        # اعمال تگ‌های شروع
-        for tag, _, _ in starts:
-            res_text = res_text[:idx] + tag + res_text[idx:]
-
     return res_text
 
 
