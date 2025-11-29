@@ -182,9 +182,10 @@ def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, 
 
 def get_entity_priority(entity):
     """
-    اولویت‌بندی تگ‌ها برای اطمینان از ترتیب صحیح تودرتویی.
-    اعداد کمتر به معنی 'بیرونی‌تر' بودن در نظر گرفته می‌شوند وقتی طول‌ها برابر است.
+    اولویت‌بندی تگ‌ها. عدد کمتر = اولویت بالاتر (بیرونی‌تر).
+    Blockquote باید 0 باشد تا از همه بیرونی‌تر باشد (مثلاً > **متن**).
     """
+    if isinstance(entity, MessageEntityBlockquote): return 0  # اولویت بالا برای نقل قول
     if isinstance(entity, MessageEntityBold): return 1
     if isinstance(entity, MessageEntityItalic): return 2
     if isinstance(entity, MessageEntityStrike): return 3
@@ -193,16 +194,15 @@ def get_entity_priority(entity):
     if isinstance(entity, MessageEntityCode): return 6
     if isinstance(entity, MessageEntityPre): return 7
     if isinstance(entity, MessageEntityTextUrl): return 8
-    if isinstance(entity, MessageEntityBlockquote): return 9
     return 10
 
 
-# --- تابع پیشرفته و اصلاح شده برای هندل کردن مارک‌داون‌های تودرتو ---
+# --- تابع پیشرفته و اصلاح شده برای هندل کردن مارک‌داون‌های تودرتو و چندخطی ---
 def apply_markdown_to_text(text: str, entities: list) -> str:
     if not entities or not text:
         return text
     
-    # 1. محاسبه ایندکس‌های صحیح (رفع مشکل ایموجی و آفست)
+    # 1. محاسبه ایندکس‌های صحیح
     corrected_entities = []
     for ent in entities:
         start, end = get_python_indices(text, ent.offset, ent.length)
@@ -255,32 +255,24 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         elif isinstance(ent, MessageEntityBlockquote):
             tag_start = "> "
             tag_end = "" 
+            # هندل کردن خطوط جدید در نقل قول چند خطی
+            # متن داخل این نقل قول را بررسی می‌کنیم
+            entity_text = text[start:end]
+            for i, char in enumerate(entity_text):
+                if char == "\n":
+                    # اگر خط جدید پیدا شد، بلافاصله بعد از آن هم یک > اضافه می‌کنیم
+                    # ایندکس جهانی = start + i + 1
+                    # اولویت 0 و طول منفی (مثل تگ شروع) تا بیرونی بماند
+                    insertions.append((start + i + 1, 1, -length, 0, "> "))
 
         if tag_start:
             priority = get_entity_priority(ent)
             
-            # --- منطق سورتینگ جدید برای حل مشکل ترتیب تگ‌ها ---
-            # ساختار کلید سورت: (Index, Is_Start, Length_Factor, Priority_Factor, Tag_String)
-            # هدف: اولویت‌بندی به شکلی که تگ‌های بیرونی زودتر باز شوند و دیرتر بسته شوند.
-            
-            # برای شروع تگ (Is_Start=1):
-            # - اولویت (Priority): برای باز شدن، تگ با اولویت عدد کمتر (مثلا بولد=1) باید زودتر پردازش شود (بیرونی باشد)
-            #   اما چون لیست را Descending (نزولی) سورت می‌کنیم، آیتم‌های 'بزرگتر' در لیست اول می‌آیند و اول پردازش می‌شوند.
-            #   برای اینکه تگ بیرونی (مثلا A) بعد از تگ درونی (مثلا B) در لیست قرار بگیرد (تا اول B پردازش شود و متن بشود B... سپس A پردازش شود و متن بشود AB...)
-            #   باید A 'کوچکتر' از B باشد.
-            #   پس Priority کمتر (1) باید باعث کوچکتر شدن شود. (1 < 2). این درست است.
-            # - طول (Length): تگ بلندتر باید بیرونی باشد. پس باید کوچکتر باشد. (-length).
-            
+            # شروع تگ
             insertions.append((start, 1, -length, priority, tag_start))
             
+            # پایان تگ (اگر وجود داشته باشد)
             if tag_end:
-                # برای پایان تگ (Is_Start=0):
-                # - تگ بیرونی (A) باید دیرتر از تگ درونی (B) بسته شود. -> ... </B></A>
-                #   یعنی در لیست پردازش، اول باید A باشد (درج </A>) و بعد B (درج </B>).
-                #   یعنی A باید 'بزرگتر' از B باشد (در سورت نزولی).
-                #   A (Priority 1) باید بزرگتر از B (Priority 2) شود؟
-                #   پس باید از منفی اولویت استفاده کنیم: -1 > -2.
-                
                 insertions.append((end, 0, length, -priority, tag_end))
     
     # مرتب‌سازی نزولی
@@ -289,7 +281,7 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
     res_text = text
     for item in insertions:
         index = item[0]
-        string_to_insert = item[4] # ایندکس 4 رشته تگ است
+        string_to_insert = item[4]
         
         if 0 <= index <= len(res_text):
             res_text = res_text[:index] + string_to_insert + res_text[index:]
