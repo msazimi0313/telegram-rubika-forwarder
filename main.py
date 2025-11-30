@@ -181,11 +181,7 @@ def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, 
 
 
 def get_entity_priority(entity):
-    """
-    اولویت‌بندی تگ‌ها. عدد کمتر = اولویت بالاتر (بیرونی‌تر).
-    Blockquote باید 0 باشد تا از همه بیرونی‌تر باشد (مثلاً > **متن**).
-    """
-    if isinstance(entity, MessageEntityBlockquote): return 0  # اولویت بالا برای نقل قول
+    if isinstance(entity, MessageEntityBlockquote): return 0
     if isinstance(entity, MessageEntityBold): return 1
     if isinstance(entity, MessageEntityItalic): return 2
     if isinstance(entity, MessageEntityStrike): return 3
@@ -211,9 +207,13 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
 
     # 2. شناسایی محدوده‌های "بلاک کد"
     code_ranges = []
+    blockquote_intervals = [] # برای تشخیص نقل قول‌های پشت سر هم
+    
     for item in corrected_entities:
         if isinstance(item['ent'], MessageEntityPre):
             code_ranges.append((item['start'], item['end']))
+        if isinstance(item['ent'], MessageEntityBlockquote):
+            blockquote_intervals.append((item['start'], item['end']))
             
     def is_inside_code_block(pos):
         for start, end in code_ranges:
@@ -255,22 +255,28 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             tag_end = f"]({ent.url})"
         elif isinstance(ent, MessageEntityBlockquote):
             tag_start = "> "
-            tag_end = "" 
+            # FIX 2: استفاده از کاراکتر نامرئی Zero Width Space (\u200b)
+            # این کاراکتر باعث می‌شود نقل قول بسته شود و متن بعدی (اگر بلافاصله باشد) داخل نقل قول نیفتد
+            tag_end = "\u200b"
             
-            # FIX 1: جداسازی دو نقل قول متوالی با تزریق یک خط خالی
-            # اگر نقل قول بلافاصله بعد از یک کاراکتر جدید (مثلاً \n) شروع می‌شود، 
-            # باید یک \n اضافی قبل از > تزریق کنیم تا بلوک‌های مارک‌داون جدا شوند.
+            # FIX 1: جداسازی هوشمند دو نقل قول متوالی
+            # فقط اگر این نقل قول دقیقاً بعد از یک نقل قول دیگر شروع شده باشد، خط اضافه می‌زنیم.
+            # چک می‌کنیم آیا start - 1 (که می‌شود کاراکتر \n) نقطه پایان یک نقل قول دیگر بوده است؟
+            is_adjacent_quote = False
             if start > 0 and text[start - 1] == '\n':
-                # اولویت -1 از 0 پایین‌تر است، بنابراین در سورت نزولی (reverse=True)، 
-                # این آیتم بعد از تگ '> ' قرار می‌گیرد اما چون ایندکس‌ها یکسان هستند، 
-                # در نهایت در متن نهایی قبل از '> ' قرار می‌گیرد: "\n> "
+                for b_start, b_end in blockquote_intervals:
+                    if b_end == start - 1: # اگر نقل قول قبلی دقیقاً قبل از اینتر تمام شده باشد
+                        is_adjacent_quote = True
+                        break
+            
+            if is_adjacent_quote:
+                # فقط بین دو نقل قول فاصله می‌اندازیم
                 insertions.append((start, 1, -length, -1, "\n"))
                 
-            # FIX 2: هندل کردن خطوط جدید در نقل قول چند خطی
+            # هندل کردن خطوط جدید داخل خود نقل قول
             entity_text = text[start:end]
             for i, char in enumerate(entity_text):
                 if char == "\n":
-                    # اگر خط جدید داخل نقل قول پیدا شد، بلافاصله بعد از آن هم یک > اضافه می‌کنیم
                     insertions.append((start + i + 1, 1, -length, priority, "> "))
 
         if tag_start:
