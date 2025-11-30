@@ -181,6 +181,9 @@ def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, 
 
 
 def get_entity_priority(entity):
+    """
+    اولویت‌بندی تگ‌ها. عدد کمتر = اولویت بالاتر (بیرونی‌تر).
+    """
     if isinstance(entity, MessageEntityBlockquote): return 0
     if isinstance(entity, MessageEntityBold): return 1
     if isinstance(entity, MessageEntityItalic): return 2
@@ -207,7 +210,7 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
 
     # 2. شناسایی محدوده‌های "بلاک کد"
     code_ranges = []
-    blockquote_intervals = [] # برای تشخیص نقل قول‌های پشت سر هم
+    blockquote_intervals = []
     
     for item in corrected_entities:
         if isinstance(item['ent'], MessageEntityPre):
@@ -236,6 +239,7 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         tag_end = ""
         priority = get_entity_priority(ent)
         
+        # تعیین نوع تگ
         if isinstance(ent, MessageEntityBold):
             tag_start, tag_end = "**", "**"
         elif isinstance(ent, MessageEntityItalic):
@@ -255,35 +259,59 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             tag_end = f"]({ent.url})"
         elif isinstance(ent, MessageEntityBlockquote):
             tag_start = "> "
-            # FIX 2: استفاده از کاراکتر نامرئی Zero Width Space (\u200b)
-            # این کاراکتر باعث می‌شود نقل قول بسته شود و متن بعدی (اگر بلافاصله باشد) داخل نقل قول نیفتد
             tag_end = "\u200b"
             
-            # FIX 1: جداسازی هوشمند دو نقل قول متوالی
-            # فقط اگر این نقل قول دقیقاً بعد از یک نقل قول دیگر شروع شده باشد، خط اضافه می‌زنیم.
-            # چک می‌کنیم آیا start - 1 (که می‌شود کاراکتر \n) نقطه پایان یک نقل قول دیگر بوده است؟
+            # هندل کردن فاصله بین نقل قول‌ها
             is_adjacent_quote = False
             if start > 0 and text[start - 1] == '\n':
                 for b_start, b_end in blockquote_intervals:
-                    if b_end == start - 1: # اگر نقل قول قبلی دقیقاً قبل از اینتر تمام شده باشد
+                    if b_end == start - 1:
                         is_adjacent_quote = True
                         break
-            
             if is_adjacent_quote:
-                # فقط بین دو نقل قول فاصله می‌اندازیم
                 insertions.append((start, 1, -length, -1, "\n"))
                 
-            # هندل کردن خطوط جدید داخل خود نقل قول
+            # هندل کردن خطوط جدید داخل نقل قول
             entity_text = text[start:end]
             for i, char in enumerate(entity_text):
                 if char == "\n":
                     insertions.append((start + i + 1, 1, -length, priority, "> "))
 
-        if tag_start:
-            # شروع تگ
-            insertions.append((start, 1, -length, priority, tag_start))
+        # -------------------------------------------------------------------------
+        # FIX: شکستن تگ‌های چندخطی (Bold, Spoiler, Italic, etc.)
+        # اگر تگ از نوعی است که باید در خط جدید بسته و دوباره باز شود
+        # (شامل Pre و Blockquote نمی‌شود چون آن‌ها منطق متفاوتی دارند)
+        # -------------------------------------------------------------------------
+        splittable_types = (
+            MessageEntityBold, MessageEntityItalic, MessageEntityStrike,
+            MessageEntityUnderline, MessageEntitySpoiler, MessageEntityCode,
+            MessageEntityTextUrl
+        )
+        
+        if tag_start and isinstance(ent, splittable_types) and '\n' in text[start:end]:
+            # منطق شکستن تگ: برای هر خط یک بار تگ را باز و بسته می‌کنیم
+            current_idx = start
+            entity_text = text[start:end]
             
-            # پایان تگ (اگر وجود داشته باشد)
+            for i, char in enumerate(entity_text):
+                abs_index = start + i
+                if char == '\n':
+                    # پایان سطر فعلی: بستن تگ اگر سطر خالی نیست
+                    if abs_index > current_idx:
+                        insertions.append((current_idx, 1, -length, priority, tag_start))
+                        insertions.append((abs_index, 0, length, -priority, tag_end))
+                    
+                    # پرش از روی کاراکتر اینتر
+                    current_idx = abs_index + 1
+            
+            # سطر آخر (بعد از آخرین اینتر)
+            if end > current_idx:
+                insertions.append((current_idx, 1, -length, priority, tag_start))
+                insertions.append((end, 0, length, -priority, tag_end))
+        
+        # حالت عادی (یک خطی یا نوع‌هایی که نیاز به شکستن ندارند مثل Blockquote)
+        elif tag_start:
+            insertions.append((start, 1, -length, priority, tag_start))
             if tag_end:
                 insertions.append((end, 0, length, -priority, tag_end))
     
