@@ -5,7 +5,7 @@ import logging
 import tempfile
 import sqlite3
 import importlib.metadata
-from typing import Optional, Tuple, Any, Dict
+from typing import Optional, Tuple, Any, Dict, List
 
 from aiohttp import web
 from telethon import TelegramClient, events
@@ -13,7 +13,8 @@ from telethon.sessions import StringSession
 from telethon.tl.types import (
     MessageEntityBold, MessageEntityItalic, MessageEntityStrike, 
     MessageEntityUnderline, MessageEntitySpoiler, MessageEntityCode, 
-    MessageEntityPre, MessageEntityTextUrl, MessageEntityBlockquote
+    MessageEntityPre, MessageEntityTextUrl, MessageEntityBlockquote,
+    DocumentAttributeAudio
 )
 
 from rubpy import BotClient
@@ -150,19 +151,28 @@ def guess_file_type_from_telethon(msg) -> str:
         return "Gif"
     return "File"
 
+def get_file_duration(msg) -> int:
+    """استخراج طول فایل (ویس/موزیک) به ثانیه برای نمایش صحیح در روبیکا"""
+    # 1. از طریق پراپرتی مستقیم
+    if hasattr(msg, 'file') and hasattr(msg.file, 'duration') and msg.file.duration:
+        return msg.file.duration
+    
+    # 2. از طریق Attributes سند
+    if hasattr(msg, 'document') and msg.document:
+        for attr in msg.document.attributes:
+            if isinstance(attr, DocumentAttributeAudio):
+                return attr.duration
+    return 0 # اگر پیدا نشد
+
 
 def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, int]:
-    """تبدیل آفست‌های UTF-16 تلگرام به ایندکس‌های پایتون"""
     if tg_offset == 0 and tg_length == 0:
         return 0, 0
-        
     utf16_pos = 0
     py_start = -1
     py_end = -1
-    
     if tg_offset == 0:
         py_start = 0
-        
     for i, char in enumerate(text):
         if utf16_pos == tg_offset:
             py_start = i
@@ -171,19 +181,14 @@ def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, 
             break
         char_len = 2 if ord(char) > 0xFFFF else 1
         utf16_pos += char_len
-        
     if py_start == -1 and utf16_pos == tg_offset:
         py_start = len(text)
     if py_end == -1: 
         py_end = len(text)
-        
     return py_start, py_end
 
 
 def get_entity_priority(entity):
-    """
-    اولویت‌بندی تگ‌ها. عدد کمتر = اولویت بالاتر (بیرونی‌تر).
-    """
     if isinstance(entity, MessageEntityBlockquote): return 0
     if isinstance(entity, MessageEntityBold): return 1
     if isinstance(entity, MessageEntityItalic): return 2
@@ -196,19 +201,16 @@ def get_entity_priority(entity):
     return 10
 
 
-# --- تابع پیشرفته و اصلاح شده برای هندل کردن مارک‌داون‌های تودرتو و چندخطی ---
 def apply_markdown_to_text(text: str, entities: list) -> str:
     if not entities or not text:
         return text
     
-    # 1. محاسبه ایندکس‌های صحیح
     corrected_entities = []
     for ent in entities:
         start, end = get_python_indices(text, ent.offset, ent.length)
         length = end - start
         corrected_entities.append({'start': start, 'end': end, 'length': length, 'ent': ent})
 
-    # 2. شناسایی محدوده‌های "بلاک کد"
     code_ranges = []
     blockquote_intervals = []
     
@@ -239,7 +241,6 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         tag_end = ""
         priority = get_entity_priority(ent)
         
-        # تعیین نوع تگ
         if isinstance(ent, MessageEntityBold):
             tag_start, tag_end = "**", "**"
         elif isinstance(ent, MessageEntityItalic):
@@ -261,7 +262,6 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             tag_start = "> "
             tag_end = "\u200b"
             
-            # هندل کردن فاصله بین نقل قول‌ها
             is_adjacent_quote = False
             if start > 0 and text[start - 1] == '\n':
                 for b_start, b_end in blockquote_intervals:
@@ -271,17 +271,11 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
             if is_adjacent_quote:
                 insertions.append((start, 1, -length, -1, "\n"))
                 
-            # هندل کردن خطوط جدید داخل نقل قول
             entity_text = text[start:end]
             for i, char in enumerate(entity_text):
                 if char == "\n":
                     insertions.append((start + i + 1, 1, -length, priority, "> "))
 
-        # -------------------------------------------------------------------------
-        # FIX: شکستن تگ‌های چندخطی (Bold, Spoiler, Italic, etc.)
-        # اگر تگ از نوعی است که باید در خط جدید بسته و دوباره باز شود
-        # (شامل Pre و Blockquote نمی‌شود چون آن‌ها منطق متفاوتی دارند)
-        # -------------------------------------------------------------------------
         splittable_types = (
             MessageEntityBold, MessageEntityItalic, MessageEntityStrike,
             MessageEntityUnderline, MessageEntitySpoiler, MessageEntityCode,
@@ -289,67 +283,94 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
         )
         
         if tag_start and isinstance(ent, splittable_types) and '\n' in text[start:end]:
-            # منطق شکستن تگ: برای هر خط یک بار تگ را باز و بسته می‌کنیم
             current_idx = start
             entity_text = text[start:end]
-            
             for i, char in enumerate(entity_text):
                 abs_index = start + i
                 if char == '\n':
-                    # پایان سطر فعلی: بستن تگ اگر سطر خالی نیست
                     if abs_index > current_idx:
                         insertions.append((current_idx, 1, -length, priority, tag_start))
                         insertions.append((abs_index, 0, length, -priority, tag_end))
-                    
-                    # پرش از روی کاراکتر اینتر
                     current_idx = abs_index + 1
-            
-            # سطر آخر (بعد از آخرین اینتر)
             if end > current_idx:
                 insertions.append((current_idx, 1, -length, priority, tag_start))
                 insertions.append((end, 0, length, -priority, tag_end))
-        
-        # حالت عادی (یک خطی یا نوع‌هایی که نیاز به شکستن ندارند مثل Blockquote)
         elif tag_start:
             insertions.append((start, 1, -length, priority, tag_start))
             if tag_end:
                 insertions.append((end, 0, length, -priority, tag_end))
     
-    # مرتب‌سازی نزولی
     insertions.sort(reverse=True)
     
     res_text = text
     for item in insertions:
         index = item[0]
         string_to_insert = item[4]
-        
         if 0 <= index <= len(res_text):
             res_text = res_text[:index] + string_to_insert + res_text[index:]
             
     return res_text
 
 
-async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str):
+# --- توابع ارسال فایل و متن ---
+async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str, duration: int = 0):
     try:
-        res = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type=primary_type, text=caption, parse_mode=ParseMode.MARKDOWN)
+        # ارسال Duration (time) برای ویس و ویدیو مهم است
+        res = await rb.send_file(
+            chat_id=rubika_chat_id, 
+            file=local_path, 
+            type=primary_type, 
+            text=caption, 
+            parse_mode=ParseMode.MARKDOWN,
+            time=duration
+        )
         return _extract_message_id(res)
     except APIException as e:
         msg = getattr(e, "message", str(e))
         logger.warning("send_file primary type %s failed: %s. Trying fallback...", primary_type, msg)
         try:
             file_name = os.path.basename(local_path)
-            res2 = await rb.send_file(chat_id=rubika_chat_id, file=local_path, type="File", text=caption, file_name=file_name, parse_mode=ParseMode.MARKDOWN)
+            res2 = await rb.send_file(
+                chat_id=rubika_chat_id, 
+                file=local_path, 
+                type="File", 
+                text=caption, 
+                file_name=file_name, 
+                parse_mode=ParseMode.MARKDOWN
+            )
             return _extract_message_id(res2)
         except Exception as e2:
             logger.exception("Fallback send_file(File) also failed: %s", e2)
             raise
 
+# --- تابع جدید برای ارسال نظرسنجی ---
+async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, question: str, options: List[str]):
+    try:
+        logger.info("Sending Poll to Rubika channel %s: %s", rubika_chat_id, question[:30])
+        # ایجاد نظرسنجی در روبیکا
+        res = await rb.create_poll(
+            object_guid=rubika_chat_id,
+            question=question,
+            options=options
+        )
+        rub_mid = _extract_message_id(res)
 
-async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File"):
+        if rub_mid:
+            save_mapping(tg_chat_id, tg_message_id, rubika_chat_id, rub_mid)
+            logger.info("Saved Poll mapping: TG %s/%s -> Rubika %s/%s", tg_chat_id, tg_message_id, rubika_chat_id, rub_mid)
+        else:
+            logger.warning("No rubika message id returned for Poll TG %s/%s", tg_chat_id, tg_message_id)
+        return rub_mid
+    except Exception as e:
+        logger.exception("Failed to forward Poll to rubika for tg %s/%s: %s", tg_chat_id, tg_message_id, e)
+        return None
+
+
+async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File", duration: int = 0):
     try:
         if file_path:
-            logger.info("Uploading %s to Rubika channel %s ...", file_type, rubika_chat_id)
-            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type)
+            logger.info("Uploading %s (duration=%ss) to Rubika channel %s ...", file_type, duration, rubika_chat_id)
+            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type, duration)
         else:
             logger.info("Sending text to Rubika channel %s", rubika_chat_id)
             res = await rb.send_message(chat_id=rubika_chat_id, text=text, parse_mode=ParseMode.MARKDOWN)
@@ -381,6 +402,25 @@ async def new_message_handler(event):
         PENDING_UPLOADS[pending_key] = upload_event
 
         try:
+            # 1. مدیریت نظرسنجی (Poll)
+            if msg.poll:
+                poll = msg.poll.poll
+                question = poll.question
+                # هندل کردن نسخه‌های مختلف Telethon (گاهی TextWithEntities است)
+                if hasattr(question, 'text'):
+                    question = question.text
+                
+                options = []
+                for answer in poll.answers:
+                    txt = answer.text
+                    if hasattr(txt, 'text'):
+                        txt = txt.text
+                    options.append(txt)
+                
+                await forward_poll_to_rubika(tg_chat_id, msg.id, rubika_target, question, options)
+                return
+
+            # 2. مدیریت متن مارک‌داون
             if msg.message:
                 markdown_text = apply_markdown_to_text(msg.message, msg.entities)
             else:
@@ -390,6 +430,7 @@ async def new_message_handler(event):
                 await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=markdown_text)
                 return
 
+            # 3. مدیریت مدیا (فایل، عکس، ویس و...)
             if msg.media:
                 tmpdir = tempfile.mkdtemp()
                 try:
@@ -397,12 +438,16 @@ async def new_message_handler(event):
                     caption = markdown_text or None
                     
                     ftype = guess_file_type_from_telethon(msg)
+                    # استخراج زمان برای ویس
+                    duration = get_file_duration(msg)
+                    
+                    # تبدیل فرمت ویس اگر لازم بود
                     if ftype == "Voice" and not os.path.splitext(file_path)[1]:
                         new_path = file_path + ".ogg"
                         os.rename(file_path, new_path)
                         file_path = new_path
                     
-                    await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype)
+                    await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype, duration=duration)
                 finally:
                     try:
                         if file_path and os.path.exists(file_path):
@@ -436,6 +481,8 @@ async def edited_message_handler(event):
 
         rubika_chat_id, rubika_msg_id = mapping
         
+        # نکته: نظرسنجی‌ها معمولاً در روبیکا قابل ویرایش نیستند (مگر بستن آن)،
+        # بنابراین اینجا تمرکز روی متن و کپشن است.
         new_markdown_text = apply_markdown_to_text(msg.message or "", msg.entities)
 
         if new_markdown_text:
