@@ -152,17 +152,15 @@ def guess_file_type_from_telethon(msg) -> str:
     return "File"
 
 def get_file_duration(msg) -> int:
-    """استخراج طول فایل (ویس/موزیک) به ثانیه برای نمایش صحیح در روبیکا"""
-    # 1. از طریق پراپرتی مستقیم
+    """استخراج طول فایل (ویس/موزیک) به ثانیه"""
     if hasattr(msg, 'file') and hasattr(msg.file, 'duration') and msg.file.duration:
         return msg.file.duration
     
-    # 2. از طریق Attributes سند
     if hasattr(msg, 'document') and msg.document:
         for attr in msg.document.attributes:
             if isinstance(attr, DocumentAttributeAudio):
                 return attr.duration
-    return 0 # اگر پیدا نشد
+    return 0
 
 
 def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, int]:
@@ -315,14 +313,14 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
 # --- توابع ارسال فایل و متن ---
 async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str, duration: int = 0):
     try:
-        # ارسال Duration (time) برای ویس و ویدیو مهم است
+        # اصلاح شده: حذف آرگومان time=duration چون باعث خطا می‌شد
+        # خود سرور روبیکا معمولا زمان ویس را تشخیص می‌دهد
         res = await rb.send_file(
             chat_id=rubika_chat_id, 
             file=local_path, 
             type=primary_type, 
             text=caption, 
-            parse_mode=ParseMode.MARKDOWN,
-            time=duration
+            parse_mode=ParseMode.MARKDOWN
         )
         return _extract_message_id(res)
     except APIException as e:
@@ -343,11 +341,10 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
             logger.exception("Fallback send_file(File) also failed: %s", e2)
             raise
 
-# --- تابع جدید برای ارسال نظرسنجی ---
+# --- تابع برای ارسال نظرسنجی ---
 async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, question: str, options: List[str]):
     try:
         logger.info("Sending Poll to Rubika channel %s: %s", rubika_chat_id, question[:30])
-        # ایجاد نظرسنجی در روبیکا
         res = await rb.create_poll(
             object_guid=rubika_chat_id,
             question=question,
@@ -406,7 +403,6 @@ async def new_message_handler(event):
             if msg.poll:
                 poll = msg.poll.poll
                 question = poll.question
-                # هندل کردن نسخه‌های مختلف Telethon (گاهی TextWithEntities است)
                 if hasattr(question, 'text'):
                     question = question.text
                 
@@ -430,7 +426,7 @@ async def new_message_handler(event):
                 await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, text=markdown_text)
                 return
 
-            # 3. مدیریت مدیا (فایل، عکس، ویس و...)
+            # 3. مدیریت مدیا
             if msg.media:
                 tmpdir = tempfile.mkdtemp()
                 try:
@@ -438,10 +434,8 @@ async def new_message_handler(event):
                     caption = markdown_text or None
                     
                     ftype = guess_file_type_from_telethon(msg)
-                    # استخراج زمان برای ویس
                     duration = get_file_duration(msg)
                     
-                    # تبدیل فرمت ویس اگر لازم بود
                     if ftype == "Voice" and not os.path.splitext(file_path)[1]:
                         new_path = file_path + ".ogg"
                         os.rename(file_path, new_path)
@@ -481,8 +475,6 @@ async def edited_message_handler(event):
 
         rubika_chat_id, rubika_msg_id = mapping
         
-        # نکته: نظرسنجی‌ها معمولاً در روبیکا قابل ویرایش نیستند (مگر بستن آن)،
-        # بنابراین اینجا تمرکز روی متن و کپشن است.
         new_markdown_text = apply_markdown_to_text(msg.message or "", msg.entities)
 
         if new_markdown_text:
