@@ -116,6 +116,7 @@ def delete_mapping(tg_chat_id: str, tg_message_id: int):
 
 # ----------------- utilities -----------------
 def _extract_message_id(result: Any) -> Optional[str]:
+    """تلاش برای استخراج شناسه پیام از انواع مختلف پاسخ‌های روبیکا"""
     if result is None:
         return None
     
@@ -142,6 +143,7 @@ def _extract_message_id(result: Any) -> Optional[str]:
 
 
 def guess_file_type_from_telethon(msg) -> str:
+    """حدس زدن نوع فایل بر اساس شیء پیام تلگرام"""
     if getattr(msg, "photo", None):
         return "Image"
     if getattr(msg, "video", None):
@@ -165,6 +167,7 @@ def get_file_duration(msg) -> int:
 
 
 def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, int]:
+    """تبدیل ایندکس‌های UTF-16 تلگرام به ایندکس‌های پایتون (UTF-8)"""
     if tg_offset == 0 and tg_length == 0:
         return 0, 0
     utf16_pos = 0
@@ -188,6 +191,7 @@ def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, 
 
 
 def get_entity_priority(entity):
+    """اولویت‌بندی برای جلوگیری از تداخل تگ‌های مارک‌داون"""
     if isinstance(entity, MessageEntityBlockquote): return 0
     if isinstance(entity, MessageEntityBold): return 1
     if isinstance(entity, MessageEntityItalic): return 2
@@ -201,6 +205,7 @@ def get_entity_priority(entity):
 
 
 def apply_markdown_to_text(text: str, entities: list) -> str:
+    """تبدیل موجودیت‌های متن (Entities) تلگرام به فرمت مارک‌داون روبیکا"""
     if not entities or not text:
         return text
     
@@ -317,76 +322,77 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
         logger.error("File is empty or missing: %s", local_path)
         return None
 
+    # 1. مدیریت اختصاصی ویس (Voice)
+    if primary_type == "Voice":
+        if hasattr(rb, 'send_voice'):
+            try:
+                logger.info("Using explicit send_voice method for OGG file.")
+                # توجه: از time=duration استفاده می‌شود که پارامتر رایج برای ویس است
+                res = await rb.send_voice(
+                    chat_id=rubika_chat_id,
+                    file=local_path,
+                    text=caption,
+                    time=duration, 
+                    parse_mode=ParseMode.MARKDOWN
+                )
+                return _extract_message_id(res)
+            except (APIException, KeyError, TypeError) as e:
+                # اگر send_voice شکست خورد یا خطای 'data' داد، به سراغ File می‌رویم
+                logger.warning("send_voice failed or returned bad data: %s. Skipping explicit 'Voice' type and falling back to 'File'.", str(e))
+                # رد شدن از فال‌بک ناپایدار send_file(type='Voice') و رفتن مستقیم به 'File'
+
+    # 2. مدیریت انواع دیگر (Image, Video, Gif) یا Voice در صورت عدم وجود send_voice
     try:
-        # استراتژی ویس: اگر متد send_voice وجود دارد، اولویت با آن است
-        if primary_type == "Voice" and hasattr(rb, 'send_voice'):
-            logger.info("Using explicit send_voice method for %s", local_path)
-            res = await rb.send_voice(
-                chat_id=rubika_chat_id,
-                file=local_path,
-                text=caption,
-                time=duration, # معمولا send_voice پارامتر time/duration دارد
+        if primary_type != "Voice" or not hasattr(rb, 'send_voice'):
+            res = await rb.send_file(
+                chat_id=rubika_chat_id, 
+                file=local_path, 
+                type=primary_type, # برای Image/Video/Gif
+                text=caption, 
                 parse_mode=ParseMode.MARKDOWN
             )
             return _extract_message_id(res)
-        
-        # فال‌بک به send_file معمولی
-        res = await rb.send_file(
-            chat_id=rubika_chat_id, 
-            file=local_path, 
-            type=primary_type, 
-            text=caption, 
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return _extract_message_id(res)
+        # اگر Voice بود و send_voice شکست خورده بود (در بخش 1)، این بخش اجرا نمی‌شود.
     except (APIException, KeyError, TypeError) as e:
         logger.warning("Primary upload failed (%s): %s. Attempting fallback to 'File'...", primary_type, str(e))
-        try:
-            file_name = os.path.basename(local_path)
-            res2 = await rb.send_file(
-                chat_id=rubika_chat_id, 
-                file=local_path, 
-                type="File", 
-                text=caption, 
-                file_name=file_name, 
-                parse_mode=ParseMode.MARKDOWN
-            )
-            return _extract_message_id(res2)
-        except Exception as e2:
-            logger.exception("Fallback upload also failed: %s", e2)
-            return None
+        pass # ادامه برای فال‌بک نهایی
+
+    # 3. فال‌بک نهایی: ارسال به عنوان فایل عمومی (File)
+    try:
+        file_name = os.path.basename(local_path)
+        res2 = await rb.send_file(
+            chat_id=rubika_chat_id, 
+            file=local_path, 
+            type="File", 
+            text=caption, 
+            file_name=file_name, 
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return _extract_message_id(res2)
+    except Exception as e2:
+        logger.exception("Fallback upload (File) also failed: %s", e2)
+        return None
 
 # --- تابع برای ارسال نظرسنجی ---
 async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, question: str, options: List[str]):
     try:
         logger.info("Processing Poll for Rubika channel %s: %s", rubika_chat_id, question[:30])
         
-        # 1. تلاش برای استفاده از send_poll
+        # 1. تلاش برای استفاده از send_poll با پارامتر صحیح (chat_id به جای object_guid)
         if hasattr(rb, 'send_poll'):
             try:
-                res = await rb.send_poll(object_guid=rubika_chat_id, question=question, options=options)
+                # FIX: استفاده از chat_id به جای object_guid
+                res = await rb.send_poll(chat_id=rubika_chat_id, question=question, options=options)
                 rub_mid = _extract_message_id(res)
                 if rub_mid:
                     save_mapping(tg_chat_id, tg_message_id, rubika_chat_id, rub_mid)
-                    logger.info("Saved Poll mapping (send_poll)")
+                    logger.info("Saved Poll mapping (send_poll success)")
                     return rub_mid
             except Exception as e:
-                logger.warning("Native send_poll failed: %s", e)
+                logger.warning("Native send_poll failed (check arguments): %s", e)
         
-        # 2. تلاش برای استفاده از create_poll (نام قدیمی یا جایگزین)
-        elif hasattr(rb, 'create_poll'):
-            try:
-                res = await rb.create_poll(object_guid=rubika_chat_id, question=question, options=options)
-                rub_mid = _extract_message_id(res)
-                if rub_mid:
-                    save_mapping(tg_chat_id, tg_message_id, rubika_chat_id, rub_mid)
-                    logger.info("Saved Poll mapping (create_poll)")
-                    return rub_mid
-            except Exception as e:
-                logger.warning("Native create_poll failed: %s", e)
-
-        # 3. فال‌بک: تبدیل نظرسنجی به متن
-        logger.info("Attributes/Methods not found. Falling back to Text Poll...")
+        # 2. فال‌بک: تبدیل نظرسنجی به متن
+        logger.info("Falling back to Text Poll...")
         poll_text = f"📊 **{question}**\n\n"
         for i, opt in enumerate(options, 1):
             poll_text += f"{i}️⃣ {opt}\n"
@@ -473,6 +479,7 @@ async def new_message_handler(event):
             # 3. مدیریت مدیا
             if msg.media:
                 tmpdir = tempfile.mkdtemp()
+                file_path = None
                 try:
                     file_path = await msg.download_media(file=tmpdir)
                     
@@ -485,21 +492,23 @@ async def new_message_handler(event):
                     ftype = guess_file_type_from_telethon(msg)
                     duration = get_file_duration(msg)
                     
-                    # تبدیل اجباری ویس به OGG
+                    # تبدیل اجباری ویس به OGG (طبق نیاز پشتیبانی)
                     if ftype == "Voice":
                         base, ext = os.path.splitext(file_path)
                         if ext.lower() != ".ogg":
                             new_path = base + ".ogg"
-                            shutil.move(file_path, new_path)
+                            # اطمینان از حذف فایل اصلی پس از تغییر نام/انتقال
+                            shutil.move(file_path, new_path) 
                             file_path = new_path
                     
                     await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype, duration=duration)
                 finally:
-                    try:
-                        if file_path and os.path.exists(file_path):
-                            os.remove(file_path)
-                    except Exception:
-                        pass
+                    if file_path:
+                        try:
+                             # حذف مسیر دایرکتوری موقت
+                            shutil.rmtree(tmpdir)
+                        except Exception:
+                            logger.error(f"Failed to remove temporary directory: {tmpdir}")
         finally:
             upload_event.set()
             PENDING_UPLOADS.pop(pending_key, None)
@@ -563,10 +572,9 @@ async def start_services():
     try:
         version = importlib.metadata.version("rubpy")
         logger.info(f"Starting rubpy client (Version: {version})...")
-        # --- INTROSPECTION LOG (کد جاسوس برای پیدا کردن نام متدها) ---
+        # لاگ گرفتن از متدهای موجود برای کمک به دیباگ در آینده
         methods = [method for method in dir(rb) if not method.startswith('_')]
         logger.info(f"DEBUG: Available BotClient methods: {methods}")
-        # -------------------------------------------------------------
     except:
         logger.info("Starting rubpy client...")
         
