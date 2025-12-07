@@ -312,13 +312,25 @@ def apply_markdown_to_text(text: str, entities: list) -> str:
 
 
 # --- توابع ارسال فایل و متن ---
-async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str):
+async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, caption: str, primary_type: str, duration: int = 0):
     if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
         logger.error("File is empty or missing: %s", local_path)
         return None
 
     try:
-        # ارسال فایل (بدون پارامتر time که قبلا باعث خطا بود)
+        # استراتژی ویس: اگر متد send_voice وجود دارد، اولویت با آن است
+        if primary_type == "Voice" and hasattr(rb, 'send_voice'):
+            logger.info("Using explicit send_voice method for %s", local_path)
+            res = await rb.send_voice(
+                chat_id=rubika_chat_id,
+                file=local_path,
+                text=caption,
+                time=duration, # معمولا send_voice پارامتر time/duration دارد
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return _extract_message_id(res)
+        
+        # فال‌بک به send_file معمولی
         res = await rb.send_file(
             chat_id=rubika_chat_id, 
             file=local_path, 
@@ -349,11 +361,9 @@ async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_cha
     try:
         logger.info("Processing Poll for Rubika channel %s: %s", rubika_chat_id, question[:30])
         
-        # 1. استفاده مستقیم از send_poll (طبق دستور جدید پشتیبانی)
-        # فرض بر این است که این متد وجود دارد. اگر نامش متفاوت باشد در لاگ‌ها مشخص می‌شود.
+        # 1. تلاش برای استفاده از send_poll
         if hasattr(rb, 'send_poll'):
             try:
-                # آرگومان‌های استاندارد send_poll در کتابخانه‌های مشابه
                 res = await rb.send_poll(object_guid=rubika_chat_id, question=question, options=options)
                 rub_mid = _extract_message_id(res)
                 if rub_mid:
@@ -363,8 +373,20 @@ async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_cha
             except Exception as e:
                 logger.warning("Native send_poll failed: %s", e)
         
-        # 2. فال‌بک: تبدیل نظرسنجی به متن
-        logger.info("Falling back to Text Poll...")
+        # 2. تلاش برای استفاده از create_poll (نام قدیمی یا جایگزین)
+        elif hasattr(rb, 'create_poll'):
+            try:
+                res = await rb.create_poll(object_guid=rubika_chat_id, question=question, options=options)
+                rub_mid = _extract_message_id(res)
+                if rub_mid:
+                    save_mapping(tg_chat_id, tg_message_id, rubika_chat_id, rub_mid)
+                    logger.info("Saved Poll mapping (create_poll)")
+                    return rub_mid
+            except Exception as e:
+                logger.warning("Native create_poll failed: %s", e)
+
+        # 3. فال‌بک: تبدیل نظرسنجی به متن
+        logger.info("Attributes/Methods not found. Falling back to Text Poll...")
         poll_text = f"📊 **{question}**\n\n"
         for i, opt in enumerate(options, 1):
             poll_text += f"{i}️⃣ {opt}\n"
@@ -385,11 +407,11 @@ async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_cha
         return None
 
 
-async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File"):
+async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File", duration: int = 0):
     try:
         if file_path:
             logger.info("Uploading %s to Rubika channel %s ...", file_type, rubika_chat_id)
-            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type)
+            rub_mid = await try_send_file_with_fallback(rubika_chat_id, file_path, caption, file_type, duration)
         else:
             logger.info("Sending text to Rubika channel %s", rubika_chat_id)
             res = await rb.send_message(chat_id=rubika_chat_id, text=text, parse_mode=ParseMode.MARKDOWN)
@@ -461,18 +483,17 @@ async def new_message_handler(event):
                     caption = markdown_text or None
                     
                     ftype = guess_file_type_from_telethon(msg)
+                    duration = get_file_duration(msg)
                     
-                    # --- اصلاح ویس برای تبدیل اجباری به OGG ---
+                    # تبدیل اجباری ویس به OGG
                     if ftype == "Voice":
                         base, ext = os.path.splitext(file_path)
-                        # مهم: اگر اکستنشن .ogg نیست، حتما تغییر نام می‌دهیم
-                        # چون روبیکا فرمت‌های دیگر را برای Voice قبول نمی‌کند
                         if ext.lower() != ".ogg":
                             new_path = base + ".ogg"
                             shutil.move(file_path, new_path)
                             file_path = new_path
                     
-                    await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype)
+                    await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype, duration=duration)
                 finally:
                     try:
                         if file_path and os.path.exists(file_path):
@@ -542,6 +563,10 @@ async def start_services():
     try:
         version = importlib.metadata.version("rubpy")
         logger.info(f"Starting rubpy client (Version: {version})...")
+        # --- INTROSPECTION LOG (کد جاسوس برای پیدا کردن نام متدها) ---
+        methods = [method for method in dir(rb) if not method.startswith('_')]
+        logger.info(f"DEBUG: Available BotClient methods: {methods}")
+        # -------------------------------------------------------------
     except:
         logger.info("Starting rubpy client...")
         
