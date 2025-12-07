@@ -318,7 +318,7 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
         return None
 
     try:
-        # ارسال فایل (time حذف شده چون سرور خودش محاسبه میکند)
+        # ارسال فایل (بدون پارامتر time که قبلا باعث خطا بود)
         res = await rb.send_file(
             chat_id=rubika_chat_id, 
             file=local_path, 
@@ -349,11 +349,11 @@ async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_cha
     try:
         logger.info("Processing Poll for Rubika channel %s: %s", rubika_chat_id, question[:30])
         
-        # 1. استفاده از متد send_poll (طبق گفته پشتیبانی)
-        # چک می‌کنیم اگر متد وجود دارد استفاده کنیم
+        # 1. استفاده مستقیم از send_poll (طبق دستور جدید پشتیبانی)
+        # فرض بر این است که این متد وجود دارد. اگر نامش متفاوت باشد در لاگ‌ها مشخص می‌شود.
         if hasattr(rb, 'send_poll'):
             try:
-                # معمولاً آرگومان‌های send_poll شامل object_guid, question, options است
+                # آرگومان‌های استاندارد send_poll در کتابخانه‌های مشابه
                 res = await rb.send_poll(object_guid=rubika_chat_id, question=question, options=options)
                 rub_mid = _extract_message_id(res)
                 if rub_mid:
@@ -363,19 +363,7 @@ async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_cha
             except Exception as e:
                 logger.warning("Native send_poll failed: %s", e)
         
-        # اگر send_poll هم نبود یا خطا داد، فال‌بک به create_poll
-        elif hasattr(rb, 'create_poll'):
-             try:
-                res = await rb.create_poll(object_guid=rubika_chat_id, question=question, options=options)
-                rub_mid = _extract_message_id(res)
-                if rub_mid:
-                    save_mapping(tg_chat_id, tg_message_id, rubika_chat_id, rub_mid)
-                    logger.info("Saved Poll mapping (create_poll)")
-                    return rub_mid
-             except Exception as e:
-                logger.warning("Native create_poll failed: %s", e)
-
-        # 2. فال‌بک نهایی: تبدیل نظرسنجی به متن
+        # 2. فال‌بک: تبدیل نظرسنجی به متن
         logger.info("Falling back to Text Poll...")
         poll_text = f"📊 **{question}**\n\n"
         for i, opt in enumerate(options, 1):
@@ -474,14 +462,14 @@ async def new_message_handler(event):
                     
                     ftype = guess_file_type_from_telethon(msg)
                     
-                    # --- اصلاح مهم برای ویس (اجبار به فرمت ogg) ---
+                    # --- اصلاح ویس برای تبدیل اجباری به OGG ---
                     if ftype == "Voice":
-                        # هر پسوندی که دارد را برمیداریم و .ogg می‌چسبانیم
-                        # چون فایل دانلود شده Telethon اگر ویس باشد، محتوایش opus/ogg است
-                        base, _ = os.path.splitext(file_path)
-                        new_path = base + ".ogg"
-                        if file_path != new_path:
-                            os.rename(file_path, new_path)
+                        base, ext = os.path.splitext(file_path)
+                        # مهم: اگر اکستنشن .ogg نیست، حتما تغییر نام می‌دهیم
+                        # چون روبیکا فرمت‌های دیگر را برای Voice قبول نمی‌کند
+                        if ext.lower() != ".ogg":
+                            new_path = base + ".ogg"
+                            shutil.move(file_path, new_path)
                             file_path = new_path
                     
                     await forward_to_rubika_and_store(tg_chat_id, msg.id, rubika_target, file_path=file_path, caption=caption, file_type=ftype)
