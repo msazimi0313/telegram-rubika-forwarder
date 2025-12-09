@@ -322,28 +322,31 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
         logger.error("File is empty or missing: %s", local_path)
         return None
 
-    # 1. مدیریت اختصاصی ویس (Voice)
+    # 1. مدیریت اختصاصی ویس (Voice) با متد send_voice
     if primary_type == "Voice":
         if hasattr(rb, 'send_voice'):
             try:
-                logger.info("Using explicit send_voice method for OGG file.")
-                # توجه: از time=duration استفاده می‌شود که پارامتر رایج برای ویس است
+                # استفاده از send_voice که متد صحیح برای ارسال ویس است
+                logger.info("Attempting explicit send_voice method for OGG file.")
                 res = await rb.send_voice(
                     chat_id=rubika_chat_id,
                     file=local_path,
                     text=caption,
+                    # از پارامتر time استفاده می‌کنیم که رایج‌ترین پارامتر در کتابخانه‌های مبتنی بر روبیکاست
                     time=duration, 
                     parse_mode=ParseMode.MARKDOWN
                 )
                 return _extract_message_id(res)
             except (APIException, KeyError, TypeError) as e:
-                # اگر send_voice شکست خورد یا خطای 'data' داد، به سراغ File می‌رویم
-                logger.warning("send_voice failed or returned bad data: %s. Skipping explicit 'Voice' type and falling back to 'File'.", str(e))
-                # رد شدن از فال‌بک ناپایدار send_file(type='Voice') و رفتن مستقیم به 'File'
+                # KeyError: 'data' نشان‌دهنده یک خطای نامعمول در پاسخ API است که معمولاً
+                # به دلیل رد شدن فایل ویس توسط سرور (مثلاً عدم تشخیص فرمت صحیح) رخ می‌دهد.
+                logger.warning("send_voice failed with error: %s. Falling back to File (This often results in Music).", str(e))
+                # رد شدن و ادامه به بخش فال‌بک (File) که در انتها قرار دارد.
 
-    # 2. مدیریت انواع دیگر (Image, Video, Gif) یا Voice در صورت عدم وجود send_voice
+    # 2. مدیریت انواع دیگر (Image, Video, Gif)
     try:
-        if primary_type != "Voice" or not hasattr(rb, 'send_voice'):
+        # برای انواع دیگر، از send_file عمومی استفاده می‌کنیم
+        if primary_type != "Voice":
             res = await rb.send_file(
                 chat_id=rubika_chat_id, 
                 file=local_path, 
@@ -352,12 +355,12 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
                 parse_mode=ParseMode.MARKDOWN
             )
             return _extract_message_id(res)
-        # اگر Voice بود و send_voice شکست خورده بود (در بخش 1)، این بخش اجرا نمی‌شود.
     except (APIException, KeyError, TypeError) as e:
         logger.warning("Primary upload failed (%s): %s. Attempting fallback to 'File'...", primary_type, str(e))
         pass # ادامه برای فال‌بک نهایی
 
     # 3. فال‌بک نهایی: ارسال به عنوان فایل عمومی (File)
+    # اگر send_voice یا send_file با نوع خاص شکست خورد، به‌عنوان فایل عمومی ارسال می‌شود
     try:
         file_name = os.path.basename(local_path)
         res2 = await rb.send_file(
@@ -378,10 +381,11 @@ async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_cha
     try:
         logger.info("Processing Poll for Rubika channel %s: %s", rubika_chat_id, question[:30])
         
-        # 1. تلاش برای استفاده از send_poll با پارامتر صحیح (chat_id به جای object_guid)
+        # 1. تلاش برای استفاده از send_poll
         if hasattr(rb, 'send_poll'):
             try:
-                # FIX: استفاده از chat_id به جای object_guid
+                # FIX: تغییر پارامتر به chat_id برای جلوگیری از خطای "unexpected keyword argument 'object_guid'"
+                # بر اساس لاگ ارسالی شما، استفاده از object_guid باعث خطا می‌شود.
                 res = await rb.send_poll(chat_id=rubika_chat_id, question=question, options=options)
                 rub_mid = _extract_message_id(res)
                 if rub_mid:
@@ -389,7 +393,7 @@ async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_cha
                     logger.info("Saved Poll mapping (send_poll success)")
                     return rub_mid
             except Exception as e:
-                logger.warning("Native send_poll failed (check arguments): %s", e)
+                logger.warning("Native send_poll failed: %s", e)
         
         # 2. فال‌بک: تبدیل نظرسنجی به متن
         logger.info("Falling back to Text Poll...")
