@@ -150,6 +150,17 @@ def guess_file_type_from_telethon(msg) -> str:
         return "Gif"
     return "File"
 
+def get_file_duration(msg) -> int:
+    if hasattr(msg, 'file') and hasattr(msg.file, 'duration') and msg.file.duration:
+        return msg.file.duration
+    
+    if hasattr(msg, 'document') and msg.document:
+        for attr in msg.document.attributes:
+            if isinstance(attr, DocumentAttributeAudio):
+                return attr.duration
+    return 0
+
+
 def get_python_indices(text: str, tg_offset: int, tg_length: int) -> Tuple[int, int]:
     if tg_offset == 0 and tg_length == 0:
         return 0, 0
@@ -307,20 +318,18 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
     if primary_type == "Voice":
         if hasattr(rb, 'send_voice'):
             try:
-                # FIX: استفاده از send_voice بدون پارامتر time.
-                # همچنین پارامتر file_name را دستی تنظیم می‌کنیم تا سرور فرمت OGG را بشناسد
-                logger.info("Attempting send_voice for OGG file with explicit file_name.")
+                # FIX: تغییر نام فایل به .mp3 برای رفع مشکل موزیک شدن
+                logger.info("Attempting send_voice for MP3 file.")
                 res = await rb.send_voice(
                     chat_id=rubika_chat_id,
                     file=local_path,
                     text=caption,
-                    file_name="voice.ogg", # این پارامتر حیاتی است تا سرور بفهمد فایل صوتی است
+                    file_name="voice.mp3", # پارامتر حیاتی
                     parse_mode=ParseMode.MARKDOWN
                 )
                 return _extract_message_id(res)
             except (APIException, KeyError, TypeError) as e:
                 logger.warning("send_voice failed: %s. Falling back to File.", str(e))
-                # اگر باز هم دیتا ارور داد، یعنی فایل مشکل دارد، به فال‌بک می‌رود
 
     # 2. مدیریت سایر فایل‌ها
     try:
@@ -357,23 +366,24 @@ async def try_send_file_with_fallback(rubika_chat_id: str, local_path: str, capt
 async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, question: str, options: List[str]):
     try:
         logger.info("Processing Poll for Rubika channel %s: %s", rubika_chat_id, question[:30])
-        logger.info("DEBUG: Poll Options being sent: %s", options) # لاگ دقیق برای پشتیبانی
+        logger.info("DEBUG: Poll Options being sent: %s", options)
         
+        # تلاش برای ارسال نظرسنجی نیتیو (فعلا غیرفعال کردم چون ارور asdict میداد)
+        # اگر می‌خواهید دوباره امتحان کنید، بخش زیر را از کامنت درآورید، اما فعلا فال‌بک بهترین گزینه است.
+        """
         if hasattr(rb, 'send_poll'):
             try:
-                # استفاده از chat_id به جای object_guid (چون object_guid باعث ارور شد)
-                # اگر باز هم ارور asdict داد، مشکل از باگ داخلی rubpy در پردازش لیست options است
                 res = await rb.send_poll(chat_id=rubika_chat_id, question=question, options=options)
                 rub_mid = _extract_message_id(res)
                 if rub_mid:
                     save_mapping(tg_chat_id, tg_message_id, rubika_chat_id, rub_mid)
-                    logger.info("Saved Poll mapping (send_poll success)")
                     return rub_mid
             except Exception as e:
                 logger.warning("Native send_poll failed with error: %s", e)
+        """
         
         # فال‌بک: تبدیل نظرسنجی به متن
-        logger.info("Falling back to Text Poll due to error...")
+        logger.info("Using Text Poll (Stable mode)...")
         poll_text = f"📊 **{question}**\n\n"
         for i, opt in enumerate(options, 1):
             poll_text += f"{i}️⃣ {opt}\n"
@@ -394,7 +404,7 @@ async def forward_poll_to_rubika(tg_chat_id: str, tg_message_id: int, rubika_cha
         return None
 
 
-async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File"):
+async def forward_to_rubika_and_store(tg_chat_id: str, tg_message_id: int, rubika_chat_id: str, text: str = None, file_path: str = None, caption: str = None, file_type: str = "File", duration: int = 0):
     try:
         if file_path:
             logger.info("Uploading %s to Rubika channel %s ...", file_type, rubika_chat_id)
@@ -467,11 +477,12 @@ async def new_message_handler(event):
                     caption = markdown_text or None
                     ftype = guess_file_type_from_telethon(msg)
                     
-                    # تبدیل فرمت ویس به OGG
+                    # تبدیل فرمت ویس به MP3 (طبق دستور جدید پشتیبانی)
                     if ftype == "Voice":
                         base, ext = os.path.splitext(file_path)
-                        if ext.lower() != ".ogg":
-                            new_path = base + ".ogg"
+                        # اگر پسوند mp3 نیست، تغییر نام می‌دهیم
+                        if ext.lower() != ".mp3":
+                            new_path = base + ".mp3"
                             shutil.move(file_path, new_path)
                             file_path = new_path
                     
